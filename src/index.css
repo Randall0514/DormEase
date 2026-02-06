@@ -1,0 +1,67 @@
+:root {
+    font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+    font-weight: 400;
+    color: #213547;
+    background-color: #79acff;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+    overflow: hidden;
+}
+
+#root {
+    min-height: 100vh;
+    width: 100%;
+}
+
+
+/* Dark mode styles applied when <body> has .dark-mode */
+
+body.dark-mode {
+    background-color: #071024 !important;
+    color: #e6eefc;
+}
+
+body.dark-mode .ant-layout-header {
+    background: #0b1220 !important;
+    color: #e6eefc;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+body.dark-mode .ant-card {
+    background: #071228 !important;
+    border-color: rgba(255, 255, 255, 0.06) !important;
+    color: #e6eefc;
+}
+
+body.dark-mode .ant-list .ant-card {
+    background: #071228 !important;
+}
+
+body.dark-mode .ant-input,
+body.dark-mode .ant-input-affix-wrapper {
+    background: #0b1220 !important;
+    color: #e6eefc !important;
+    border-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+body.dark-mode .ant-btn-primary {
+    background: #2563eb !important;
+    border-color: #2563eb !important;
+}
+
+body.dark-mode .ant-typography {
+    color: #e6eefc !important;
+}
+
+body.dark-mode .ant-badge-count {
+    background: #ff6b6b !important;
+}
