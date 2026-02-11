@@ -4,6 +4,8 @@ import { Layout, Typography, Form, Input, Checkbox, Button, message } from 'antd
 const { Content } = Layout;
 const { Title, Text } = Typography;
 
+const AUTH_TOKEN_KEY = 'dormease_token';
+
 interface SignupProps {
   onNavigateToLogin?: () => void;
   onSignupSuccess?: () => void;
@@ -40,7 +42,10 @@ const Signup: React.FC<SignupProps> = ({ onNavigateToLogin, onSignupSuccess }) =
         throw new Error(errorBody.message || 'Signup failed');
       }
 
-      await response.json();
+      const data = await response.json();
+      if (data.token) {
+        localStorage.setItem(AUTH_TOKEN_KEY, data.token);
+      }
       message.success('Account created successfully.');
       if (onSignupSuccess) {
         onSignupSuccess();
@@ -74,6 +79,7 @@ const Signup: React.FC<SignupProps> = ({ onNavigateToLogin, onSignupSuccess }) =
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
+          overflowY: 'auto', // allow scrolling inside signup only
         }}
       >
         <div

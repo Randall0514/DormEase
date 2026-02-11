@@ -14,6 +14,8 @@ import {
 const { Content } = Layout;
 const { Title, Text } = Typography;
 
+const AUTH_TOKEN_KEY = 'dormease_token';
+
 interface LoginProps {
   onNavigateToSignup?: () => void;
   onLoginSuccess?: () => void;
@@ -45,7 +47,10 @@ const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onLoginSuccess }) => 
         throw new Error(errorBody.message || 'Login failed');
       }
 
-      await response.json();
+      const data = await response.json();
+      if (data.token) {
+        localStorage.setItem(AUTH_TOKEN_KEY, data.token);
+      }
       message.success('Logged in successfully.');
       if (onLoginSuccess) {
         onLoginSuccess();
@@ -84,6 +89,7 @@ const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onLoginSuccess }) => 
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
+          overflowY: 'auto', // allow scrolling inside login only
         }}
       >
         <Row
