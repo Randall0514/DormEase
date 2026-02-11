@@ -36,6 +36,7 @@ const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onLoginSuccess }) => 
         body: JSON.stringify({
           identifier: values.username,
           password: values.password,
+          platform: 'web', 
         }),
       });
 

@@ -32,14 +32,18 @@ app.get("/", (req, res) => {
 
 // Signup
 app.post("/auth/signup", async (req, res) => {
-  const { fullName, username, email, password } = req.body;
+  const { fullName, username, email, password, platform } = req.body;
 
-  if (!fullName || !username || !email || !password) {
+  if (!fullName || !username || !email || !password || !platform) {
     return res.status(400).json({ message: "All fields are required" });
   }
 
+  if (!["web", "mobile"].includes(platform)) {
+    return res.status(400).json({ message: "Invalid platform" });
+  }
+
   try {
-    // Check if username or email already exists
+    // Check if username or email exists
     const check = await pool.query(
       "SELECT * FROM users WHERE username=$1 OR email=$2",
       [username, email]
@@ -54,9 +58,9 @@ app.post("/auth/signup", async (req, res) => {
 
     // Insert user
     const result = await pool.query(
-      `INSERT INTO users (full_name, username, email, password) 
-       VALUES ($1, $2, $3, $4) RETURNING id, username, email`,
-      [fullName, username, email, hashedPassword]
+      `INSERT INTO users (full_name, username, email, password, platform) 
+       VALUES ($1, $2, $3, $4, $5) RETURNING id, username, email, platform`,
+      [fullName, username, email, hashedPassword, platform]
     );
 
     res.status(201).json({ message: "User created successfully", user: result.rows[0] });
@@ -66,12 +70,17 @@ app.post("/auth/signup", async (req, res) => {
   }
 });
 
+
 // Login
 app.post("/auth/login", async (req, res) => {
-  const { identifier, password } = req.body;
+  const { identifier, password, platform } = req.body;
 
-  if (!identifier || !password) {
-    return res.status(400).json({ message: "Username/email and password are required" });
+  if (!identifier || !password || !platform) {
+    return res.status(400).json({ message: "Username/email, password, and platform are required" });
+  }
+
+  if (!["web", "mobile"].includes(platform)) {
+    return res.status(400).json({ message: "Invalid platform" });
   }
 
   try {
@@ -91,12 +100,21 @@ app.post("/auth/login", async (req, res) => {
       return res.status(401).json({ message: "Wrong password" });
     }
 
-    res.json({ message: "Login successful", user: { id: user.id, username: user.username, email: user.email } });
+    // PLATFORM CHECK
+    if (user.platform !== platform) {
+      return res.status(403).json({ message: `This account cannot log in from ${platform}` });
+    }
+
+    res.json({
+      message: "Login successful",
+      user: { id: user.id, username: user.username, email: user.email, platform: user.platform }
+    });
   } catch (err) {
     console.error("Login error:", err);
     res.status(500).json({ message: "Database error" });
   }
 });
+
 
 // Get users (test)
 app.get("/users", async (req, res) => {

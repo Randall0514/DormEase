@@ -31,6 +31,7 @@ const Signup: React.FC<SignupProps> = ({ onNavigateToLogin, onSignupSuccess }) =
           username: values.username,
           email: values.email,
           password: values.password,
+          platform: 'web',
         }),
       });
 
