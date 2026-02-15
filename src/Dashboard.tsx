@@ -319,8 +319,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
                                   }
                                 }}
                                 style={{
-                                  width: 200,
-                                  height: 120,
+                                  width: 420,
+                                  height: 280,
                                   background: photoUrl ? 'transparent' : '#d0d0d0',
                                   borderRadius: 12,
                                   display: 'flex',
@@ -503,15 +503,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
             <Title level={4} style={{ margin: 0 }}>
               {activeSection.charAt(0).toUpperCase() + activeSection.slice(1)}
             </Title>
-            <Input.Search
-              placeholder="Search dorms, owners, or locations"
-              allowClear
-              style={{ minWidth: 220, maxWidth: 360 }}
-              onSearch={(value) => {
-                // Static for now – wire to real search later
-                console.log('Search:', value);
-              }}
-            />
+            {!['home', 'settings', 'profile'].includes(activeSection) && (
+              <Input.Search
+                placeholder="Search dorms, owners, or locations"
+                allowClear
+                style={{ minWidth: 220, maxWidth: 360 }}
+                onSearch={(value) => {
+                  // Static for now – wire to real search later
+                  console.log('Search:', value);
+                }}
+              />
+            )}
           </Space>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
             <Badge count={3}>

@@ -16,7 +16,8 @@ if (!fs.existsSync(DORMS_PHOTOS_DIR)) {
   fs.mkdirSync(DORMS_PHOTOS_DIR, { recursive: true });
 }
 
-const SESSION_DAYS = 7;
+// Session lifetime in minutes
+const SESSION_MINUTES = 5;
 
 function createSessionToken(): string {
   return crypto.randomBytes(32).toString("hex");
@@ -25,7 +26,7 @@ function createSessionToken(): string {
 async function createSession(userId: number): Promise<string> {
   const token = createSessionToken();
   const expiresAt = new Date();
-  expiresAt.setDate(expiresAt.getDate() + SESSION_DAYS);
+  expiresAt.setMinutes(expiresAt.getMinutes() + SESSION_MINUTES);
   await pool.query(
     "INSERT INTO sessions (user_id, token, expires_at) VALUES ($1, $2, $3)",
     [userId, token, expiresAt]
@@ -338,6 +339,6 @@ app.get("/users", async (req, res) => {
 
 // Start server
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running at http://192.168.1.33:${PORT}`);
+  console.log(`Server running at http://192.168.1.26:${PORT}`);
 });
 
