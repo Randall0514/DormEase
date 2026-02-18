@@ -18,6 +18,7 @@ import {
   Upload,
   message,
   Carousel,
+  Switch,
 } from 'antd';
 import type { UploadFile } from 'antd';
 import { BellOutlined, UserOutlined, InboxOutlined, LeftOutlined, RightOutlined } from '@ant-design/icons';
@@ -106,8 +107,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
       formData.append('email', String(values.email));
       formData.append('phone', String(values.phone));
       formData.append('price', String(values.price));
+      formData.append('deposit', String(values.deposit || ''));
+      formData.append('advance', String(values.advance || ''));
       formData.append('address', String(values.address));
       formData.append('capacity', String(values.capacity));
+      formData.append('water', String(values.water || false));
+      formData.append('electricity', String(values.electricity || false));
+      formData.append('gas', String(values.gas || false));
       fileList.forEach((f) => {
         if (f.originFileObj) formData.append('photos', f.originFileObj);
       });
@@ -159,13 +165,19 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
                 size="large"
               />
             </Form.Item>
+            <Form.Item name="address" rules={[{ required: true, message: 'Required' }]}>
+              <Input placeholder="Address" style={{ borderRadius: 8 }} size="large" />
+            </Form.Item>
           </Col>
           <Col span={12}>
             <Form.Item name="price" rules={[{ required: true, message: 'Required' }]}>
               <Input placeholder="Price" style={{ borderRadius: 8 }} size="large" />
             </Form.Item>
-            <Form.Item name="address" rules={[{ required: true, message: 'Required' }]}>
-              <Input placeholder="Address" style={{ borderRadius: 8 }} size="large" />
+            <Form.Item name="deposit">
+              <Input placeholder="Deposit" style={{ borderRadius: 8 }} size="large" />
+            </Form.Item>
+            <Form.Item name="advance">
+              <Input placeholder="Advance" style={{ borderRadius: 8 }} size="large" />
             </Form.Item>
             <Form.Item name="capacity" label="Room Capacity" rules={[{ required: true, message: 'Required' }]}>
               <Select
@@ -225,6 +237,35 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
             );
           })}
         </Row>
+        <div style={{ marginTop: 24, padding: 16, background: '#ffffff', borderRadius: 8 }}>
+          <Text style={{ fontWeight: 600, marginBottom: 16, display: 'block' }}>Utilities Included</Text>
+          <Row gutter={16}>
+            <Col span={8}>
+              <Form.Item name="water" valuePropName="checked" style={{ marginBottom: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <Switch />
+                  <Text>Water</Text>
+                </div>
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="electricity" valuePropName="checked" style={{ marginBottom: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <Switch />
+                  <Text>Electricity</Text>
+                </div>
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="gas" valuePropName="checked" style={{ marginBottom: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <Switch />
+                  <Text>Gas</Text>
+                </div>
+              </Form.Item>
+            </Col>
+          </Row>
+        </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 24 }}>
           <Button
             type="primary"
