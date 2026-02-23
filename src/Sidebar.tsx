@@ -9,7 +9,7 @@ import {
 
 const { Sider } = Layout;
 
-export type SectionKey = 'home' | 'settings' | 'notifications' | 'profile';
+export type SectionKey = 'home' | 'settings' | 'notifications' | 'profile' | 'archived';
 
 interface SidebarProps {
   collapsed: boolean;

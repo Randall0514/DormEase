@@ -16,7 +16,7 @@ if (!fs.existsSync(DORMS_PHOTOS_DIR)) {
   fs.mkdirSync(DORMS_PHOTOS_DIR, { recursive: true });
 }
 
-const SESSION_MINUTES = 5;
+const SESSION_MINUTES = Number(process.env.SESSION_MINUTES) || 60 * 24 * 7; // default 7 days
 
 function createSessionToken(): string {
   return crypto.randomBytes(32).toString("hex");
@@ -210,6 +210,57 @@ app.get("/auth/me", async (req, res) => {
     });
   } catch (err) {
     console.error("Auth me error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
+});
+
+// Update current user (requires auth)
+app.patch("/auth/me", requireAuth, async (req, res) => {
+  const userId = (req as express.Request & { userId: number }).userId;
+  const { fullName, username, email, password } = req.body as {
+    fullName?: string;
+    username?: string;
+    email?: string;
+    password?: string;
+  };
+
+  if (!fullName && !username && !email && !password) {
+    return res.status(400).json({ message: "No fields to update" });
+  }
+
+  try {
+    // prevent username/email collisions
+    if (username) {
+      const q = await pool.query("SELECT id FROM users WHERE username = $1 AND id != $2", [username, userId]);
+      if (q.rows.length > 0) return res.status(400).json({ message: "Username already taken" });
+    }
+    if (email) {
+      const q = await pool.query("SELECT id FROM users WHERE email = $1 AND id != $2", [email, userId]);
+      if (q.rows.length > 0) return res.status(400).json({ message: "Email already taken" });
+    }
+
+    const fields: string[] = [];
+    const vals: any[] = [];
+    let idx = 1;
+    if (fullName) { fields.push(`full_name = $${idx++}`); vals.push(fullName); }
+    if (username) { fields.push(`username = $${idx++}`); vals.push(username); }
+    if (email) { fields.push(`email = $${idx++}`); vals.push(email); }
+    if (password) {
+      const hashed = await bcrypt.hash(password, 10);
+      fields.push(`password = $${idx++}`);
+      vals.push(hashed);
+    }
+
+    if (fields.length === 0) return res.status(400).json({ message: "Nothing to update" });
+
+    const sql = `UPDATE users SET ${fields.join(", ")} WHERE id = $${idx} RETURNING id, full_name, username, email, platform`;
+    vals.push(userId);
+
+    const result = await pool.query(sql, vals);
+    const updated = result.rows[0];
+    res.json({ user: { id: updated.id, fullName: updated.full_name, username: updated.username, email: updated.email, platform: updated.platform } });
+  } catch (err) {
+    console.error("Update user error:", err);
     res.status(500).json({ message: "Database error" });
   }
 });
@@ -483,16 +534,31 @@ app.patch("/reservations/:id/status", async (req, res) => {
     return res.status(401).json({ message: "Unauthorized" });
   }
 
-  const { status } = req.body;
+  const { status, rejection_reason } = req.body;
   if (!["pending", "approved", "rejected"].includes(status)) {
     return res.status(400).json({ message: "Invalid status" });
   }
 
+  if (status === 'rejected' && (!rejection_reason || String(rejection_reason).trim().length === 0)) {
+    return res.status(400).json({ message: "Rejection reason required" });
+  }
+
   try {
-    // Only allow owner to update their own reservations
+    // Only allow owner to update their own reservations.
+    // Some reservations may have been created without dorm_owner_id set —
+    // allow the owner to update if they are the owner of the dorm referenced by the reservation.
+    const rid = Number(req.params.id);
     const result = await pool.query(
-      "UPDATE reservations SET status = $1 WHERE id = $2 AND dorm_owner_id = $3 RETURNING *",
-      [status, req.params.id, userId]
+      `UPDATE reservations r
+       SET status = $1, rejection_reason = $2
+       FROM dorms d
+       WHERE r.id = $3
+         AND (
+           r.dorm_owner_id = $4
+           OR (r.dorm_owner_id IS NULL AND d.dorm_name = r.dorm_name AND d.user_id = $4)
+         )
+       RETURNING r.*`,
+      [status, status === 'rejected' ? rejection_reason : null, rid, userId]
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ message: "Reservation not found or not authorized" });
@@ -500,11 +566,98 @@ app.patch("/reservations/:id/status", async (req, res) => {
     return res.json({ message: "Status updated", reservation: result.rows[0] });
   } catch (err) {
     console.error("Update status error:", err);
-    return res.status(500).json({ message: "Database error" });
+    const msg = process.env.NODE_ENV === 'production' ? 'Database error' : (err && err.message) || 'Database error';
+    return res.status(500).json({ message: msg });
   }
 });
 
-// Start server
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running at http://192.168.68.127:${PORT}`);
+// Ensure DB schema for optional columns
+async function ensureSchema(): Promise<void> {
+  try {
+    await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS rejection_reason text;");
+    console.log('✅ ensured rejection_reason column exists');
+  } catch (err) {
+    console.error('Error ensuring schema:', err);
+  }
+}
+
+async function startServer() {
+  await ensureSchema();
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running at http://192.168.68.101:${PORT}`);
+  });
+}
+
+startServer();
+
+// PATCH /reservations/:id/archive — mark a reservation as archived
+app.patch("/reservations/:id/archive", async (req, res) => {
+  const userId = await getUserIdFromToken(req);
+  if (userId === null) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    const rid = Number(req.params.id);
+    const result = await pool.query(
+      "UPDATE reservations SET status = $1 WHERE id = $2 AND dorm_owner_id = $3 RETURNING *",
+      ["archived", rid, userId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Reservation not found or not authorized" });
+    }
+    return res.json({ message: "Archived", reservation: result.rows[0] });
+  } catch (err) {
+    console.error("Archive reservation error:", err);
+    const msg = process.env.NODE_ENV === 'production' ? 'Database error' : (err && err.message) || 'Database error';
+    return res.status(500).json({ message: msg });
+  }
+});
+
+// DELETE /reservations/:id — owner deletes a reservation
+app.delete("/reservations/:id", async (req, res) => {
+  const userId = await getUserIdFromToken(req);
+  if (userId === null) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    const rid = Number(req.params.id);
+    const result = await pool.query(
+      "DELETE FROM reservations WHERE id = $1 AND dorm_owner_id = $2 RETURNING id",
+      [rid, userId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Reservation not found or not authorized" });
+    }
+    return res.json({ message: "Deleted" });
+  } catch (err) {
+    console.error("Delete reservation error:", err);
+    const msg = process.env.NODE_ENV === 'production' ? 'Database error' : (err && err.message) || 'Database error';
+    return res.status(500).json({ message: msg });
+  }
+});
+
+// PATCH /reservations/:id/unarchive — restore a reservation from archived to pending
+app.patch("/reservations/:id/unarchive", async (req, res) => {
+  const userId = await getUserIdFromToken(req);
+  if (userId === null) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    const rid = Number(req.params.id);
+    const result = await pool.query(
+      "UPDATE reservations SET status = $1 WHERE id = $2 AND dorm_owner_id = $3 RETURNING *",
+      ["pending", rid, userId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Reservation not found or not authorized" });
+    }
+    return res.json({ message: "Unarchived", reservation: result.rows[0] });
+  } catch (err) {
+    console.error("Unarchive reservation error:", err);
+    const msg = process.env.NODE_ENV === 'production' ? 'Database error' : (err && err.message) || 'Database error';
+    return res.status(500).json({ message: msg });
+  }
 });

@@ -34,7 +34,11 @@ const statusColor = (status: string) => {
   return 'orange';
 };
 
-const Notifications: React.FC = () => {
+type Props = {
+  onNavigate?: (section: string) => void;
+};
+
+const Notifications: React.FC<Props> = ({ onNavigate }) => {
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedReservation, setSelectedReservation] = useState<Reservation | null>(null);
@@ -53,7 +57,8 @@ const Notifications: React.FC = () => {
       });
       if (!res.ok) throw new Error(`Error: ${res.status}`);
       const data: Reservation[] = await res.json();
-      setReservations(data);
+      // exclude archived from Booking Notifications
+      setReservations(data.filter((r) => r.status !== 'archived'));
     } catch (err) {
       message.error('Could not load reservations. Please try again.');
     } finally {
@@ -68,15 +73,76 @@ const Notifications: React.FC = () => {
   const updateStatus = async (id: number, status: 'approved' | 'rejected') => {
     setUpdatingId(id);
     try {
+      let body: any = { status };
+      if (status === 'rejected') {
+        // Step 1: collect rejection reason
+        const reason = await new Promise<string | null>((resolve) => {
+          let val = '';
+          Modal.confirm({
+            title: 'Reject reservation',
+            width: 800,
+            content: (
+              <div>
+                <p>Please provide a reason for rejecting this reservation:</p>
+                <textarea onChange={(e: any) => { val = e.target.value; }} rows={6} style={{ width: '100%', padding: 8, height: 160 }} placeholder="Reason" />
+              </div>
+            ),
+            okText: 'Next',
+            cancelText: 'Cancel',
+            onOk: () => { resolve(val); },
+            onCancel: () => { resolve(null); },
+          });
+        });
+        if (reason === null) {
+          setUpdatingId(null);
+          return; // user cancelled
+        }
+
+        const trimmed = String(reason).trim();
+        if (trimmed.length === 0) {
+          message.error('Rejection reason is required');
+          setUpdatingId(null);
+          return;
+        }
+
+        // Step 2: confirm the rejection with the provided reason
+        const confirm = await new Promise<boolean>((resolve) => {
+          Modal.confirm({
+            title: 'Are you sure?',
+            width: 800,
+            content: (
+              <div>
+                <p>You're about to reject this tenant with the following reason:</p>
+                <div style={{ background: '#f6f8fb', padding: 12, borderRadius: 6, maxHeight: 240, overflowY: 'auto' }}>{trimmed}</div>
+              </div>
+            ),
+            okText: 'Confirm Reject',
+            cancelText: 'Cancel',
+            onOk: () => resolve(true),
+            onCancel: () => resolve(false),
+          });
+        });
+        if (!confirm) {
+          setUpdatingId(null);
+          return;
+        }
+
+        body.rejection_reason = trimmed;
+      }
+
       const res = await fetch(`${API_BASE}/reservations/${id}/status`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error('Failed to update');
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        const msg = errBody?.message || 'Failed to update';
+        throw new Error(msg);
+      }
 
       // Update UI without refetching
       setReservations((prev) =>
@@ -85,12 +151,32 @@ const Notifications: React.FC = () => {
       message.success(
         status === 'approved' ? 'Booking confirmed!' : 'Booking rejected.'
       );
-    } catch (err) {
-      message.error('Failed to update reservation status.');
+    } catch (err: any) {
+      console.error('Update status error:', err);
+      message.error(err?.message || 'Failed to update reservation status.');
     } finally {
       setUpdatingId(null);
     }
   };
+
+  const archiveReservation = async (id: number) => {
+    setUpdatingId(id);
+    try {
+      const res = await fetch(`${API_BASE}/reservations/${id}/archive`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error('Failed to archive');
+      setReservations((prev) => prev.map((r) => (r.id === id ? { ...r, status: 'archived' } : r)));
+      message.success('Reservation archived');
+    } catch (err) {
+      message.error('Failed to archive reservation.');
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  // delete moved to ArchivedNotifications page
 
   const openModal = (reservation: Reservation) => {
     setSelectedReservation(reservation);
@@ -102,6 +188,7 @@ const Notifications: React.FC = () => {
       <div style={{ maxWidth: 980, margin: '0 auto' }}>
         <Card
           title={<Title level={4} style={{ margin: 0 }}>Booking Notifications</Title>}
+          extra={<Button onClick={() => onNavigate?.('archived')}>Archived</Button>}
           style={{ borderRadius: 12 }}
         >
           {loading ? (
@@ -245,6 +332,16 @@ const Notifications: React.FC = () => {
                                   </Button>
                                 </>
                               )}
+
+                              {item.status !== 'archived' && (
+                                <Button
+                                  onClick={() => archiveReservation(item.id)}
+                                  loading={updatingId === item.id}
+                                >
+                                  Archive
+                                </Button>
+                              )}
+
                               {item.status === 'approved' && (
                                 <Tag color="green" style={{ padding: '4px 12px', fontSize: 13 }}>
                                   ✓ Confirmed

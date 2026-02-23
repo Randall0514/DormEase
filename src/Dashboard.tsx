@@ -26,6 +26,7 @@ import Sidebar, { type SectionKey } from './Sidebar';
 import Profile from './Profile';
 import Settings from './Settings';
 import Notifications from './Notifications';
+import ArchivedNotifications from './ArchivedNotifications';
 
 const { Header, Content } = Layout;
 const { Title, Text } = Typography;
@@ -512,7 +513,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
       case 'settings':
         return <Settings />;
       case 'notifications':
-        return <Notifications />;
+        return <Notifications onNavigate={setActiveSection} />;
+      case 'archived':
+        return <ArchivedNotifications onNavigate={setActiveSection} />;
       case 'profile':
         return <Profile />;
       default:

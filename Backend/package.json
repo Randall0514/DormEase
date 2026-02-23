@@ -7,7 +7,9 @@
         "test": "echo \"Error: no test specified\" && exit 1",
         "start": "ts-node index.ts",
         "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
-        "migrate": "node-pg-migrate"
+        "migrate": "node-pg-migrate",
+        "apply-sql": "node scripts/apply_sql.js",
+        "drop-notifications": "node scripts/apply_sql.js sql/005_drop_notifications.sql"
     },
     "keywords": [],
     "author": "",
