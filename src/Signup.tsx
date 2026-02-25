@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Layout, Typography, Form, Input, Checkbox, Button, message } from 'antd';
+import TermsModal from './components/TermsModal';
 import { CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 
 const { Content } = Layout;
@@ -16,6 +17,8 @@ const Signup: React.FC<SignupProps> = ({ onNavigateToLogin, onSignupSuccess }) =
   const [form] = Form.useForm();
   const [password, setPassword] = useState('');
   const [showPasswordRequirements, setShowPasswordRequirements] = useState(false);
+  const [termsVisible, setTermsVisible] = useState(false);
+  const [agreeChecked, setAgreeChecked] = useState(false);
 
   const passwordRequirements = {
     minLength: password.length >= 8,
@@ -177,9 +180,7 @@ const Signup: React.FC<SignupProps> = ({ onNavigateToLogin, onSignupSuccess }) =
             <Form.Item
               label="Password"
               name="password"
-              rules={[
-                { required: true, message: 'Please create a password' },
-              ]}
+              rules={[{ required: true, message: 'Please create a password' }]}
               style={{ marginBottom: 12 }}
             >
               <Input.Password
@@ -190,7 +191,7 @@ const Signup: React.FC<SignupProps> = ({ onNavigateToLogin, onSignupSuccess }) =
                 onBlur={() => setShowPasswordRequirements(false)}
               />
             </Form.Item>
-            
+
             {showPasswordRequirements && (
               <div
                 style={{
@@ -267,9 +268,7 @@ const Signup: React.FC<SignupProps> = ({ onNavigateToLogin, onSignupSuccess }) =
                     if (!value || getFieldValue('password') === value) {
                       return Promise.resolve();
                     }
-                    return Promise.reject(
-                      new Error('The two passwords do not match')
-                    );
+                    return Promise.reject(new Error('The two passwords do not match'));
                   },
                 }),
               ]}
@@ -284,22 +283,23 @@ const Signup: React.FC<SignupProps> = ({ onNavigateToLogin, onSignupSuccess }) =
               style={{ marginBottom: 16 }}
               rules={[
                 {
-                  validator: (_, value) =>
-                    value
-                      ? Promise.resolve()
-                      : Promise.reject(
-                          new Error('You must agree to the terms to continue')
-                        ),
+                  validator: (_, value) => (value ? Promise.resolve() : Promise.reject(new Error('You must agree to the terms to continue'))),
                 },
               ]}
             >
-              <Checkbox style={{ fontSize: 13 }}>
+              <Checkbox
+                style={{ fontSize: 13 }}
+                onChange={(e) => {
+                  setAgreeChecked(e.target.checked);
+                  form.setFieldsValue({ agree: e.target.checked });
+                }}
+              >
                 I agree to the{' '}
-                <Text underline style={{ color: '#1f3fd1' }}>
+                <Text underline style={{ color: '#1f3fd1', cursor: 'pointer' }} onClick={() => setTermsVisible(true)}>
                   Terms of Service
                 </Text>{' '}
                 and{' '}
-                <Text underline style={{ color: '#1f3fd1' }}>
+                <Text underline style={{ color: '#1f3fd1', cursor: 'pointer' }} onClick={() => setTermsVisible(true)}>
                   Privacy Policy
                 </Text>
               </Checkbox>
@@ -318,6 +318,7 @@ const Signup: React.FC<SignupProps> = ({ onNavigateToLogin, onSignupSuccess }) =
                   fontWeight: 600,
                   fontSize: 13,
                 }}
+                disabled={!agreeChecked || !allRequirementsMet}
               >
                 Create Account
               </Button>
@@ -330,6 +331,16 @@ const Signup: React.FC<SignupProps> = ({ onNavigateToLogin, onSignupSuccess }) =
               </Button>
             </div>
           </Form>
+
+          <TermsModal
+            visible={termsVisible}
+            onClose={() => setTermsVisible(false)}
+            onAgree={() => {
+              setTermsVisible(false);
+              setAgreeChecked(true);
+              form.setFieldsValue({ agree: true });
+            }}
+          />
         </div>
       </Content>
     </Layout>

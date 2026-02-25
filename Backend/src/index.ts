@@ -320,11 +320,9 @@ app.post(
       advance?: string;
       address?: string;
       capacity?: string;
-      water?: string;
-      electricity?: string;
-      gas?: string;
+      utilities?: string[] | string;
     };
-    const { dormName, email, phone, price, deposit, advance, address, capacity, water, electricity, gas } = body;
+    const { dormName, email, phone, price, deposit, advance, address, capacity, utilities: utilitiesBody } = body;
     const files = (req as express.Request & { files?: Express.Multer.File[] }).files;
 
     if (!dormName || !email || !phone || !price || !address || capacity == null) {
@@ -333,10 +331,15 @@ app.post(
 
     const phoneVal = String(phone).replace(/^\+63/, "").trim() || phone;
 
-    const utilities: string[] = [];
-    if (water === "true" || water === true) utilities.push("water");
-    if (electricity === "true" || electricity === true) utilities.push("electricity");
-    if (gas === "true" || gas === true) utilities.push("gas");
+    let utilities: string[] = [];
+    if (Array.isArray(utilitiesBody)) utilities = utilitiesBody as string[];
+    else if (typeof utilitiesBody === 'string') {
+      try {
+        utilities = JSON.parse(utilitiesBody) as string[];
+      } catch {
+        utilities = [];
+      }
+    }
 
     const newPhotoUrls: string[] =
       files && files.length > 0
@@ -584,7 +587,7 @@ async function ensureSchema(): Promise<void> {
 async function startServer() {
   await ensureSchema();
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running at http://192.168.68.101:${PORT}`);
+    console.log(`Server running at http://192.168.68.124:${PORT}`);
   });
 }
 
