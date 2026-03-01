@@ -3,13 +3,13 @@ import { Layout, Menu } from 'antd';
 import {
   HomeOutlined,
   SettingOutlined,
-  BellOutlined,
+  MessageOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 
 const { Sider } = Layout;
 
-export type SectionKey = 'home' | 'settings' | 'notifications' | 'profile' | 'archived';
+export type SectionKey = 'home' | 'settings' | 'messages' | 'profile' | 'archived';
 
 interface SidebarProps {
   collapsed: boolean;
@@ -27,13 +27,13 @@ const Sidebar: React.FC<SidebarProps> = ({
   // Define menu items in the visual order we want
   const menuItems = [
     { key: 'home', icon: <HomeOutlined />, label: 'Home' },
-    { key: 'notifications', icon: <BellOutlined />, label: 'Notifications' },
+    { key: 'messages', icon: <MessageOutlined />, label: 'Messages' },
     { key: 'profile', icon: <UserOutlined />, label: 'Profile' },
     { key: 'settings', icon: <SettingOutlined />, label: 'Settings' },
   ];
 
-  // Top: Home, Notifications
-  const topItems = menuItems.filter((i) => ['home', 'notifications','profile', 'settings'].includes(i.key));
+  // Top: Home, Messages
+  const topItems = menuItems.filter((i) => ['home', 'messages', 'profile', 'settings'].includes(i.key));
  
 
   return (

@@ -1,14 +1,18 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Card, List, Tag, Typography, Row, Col, Space,
-  Avatar, Button, Divider, Spin, Modal, Descriptions, message
+  Avatar, Button, Divider, Spin, Modal, Descriptions, message, Badge, Tooltip, Input, Alert
 } from 'antd';
-import { CalendarOutlined, UserOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import {
+  CalendarOutlined, UserOutlined, ClockCircleOutlined,
+  LeftOutlined, CheckCircleOutlined, CloseCircleOutlined
+} from '@ant-design/icons';
 
 const { Title, Text } = Typography;
 
 const API_BASE = 'http://localhost:3000';
 const AUTH_TOKEN_KEY = 'dormease_token';
+const POLL_INTERVAL_MS = 8_000;
 
 interface Reservation {
   id: number;
@@ -25,13 +29,31 @@ interface Reservation {
   notes: string;
   payment_method: string;
   status: string;
+  rejection_reason?: string;
+  tenant_action?: string | null;
+  cancel_reason?: string | null;
+  tenant_action_at?: string | null;
   created_at: string;
+  room_capacity?: number;
+  dorm_id?: number;
 }
 
 const statusColor = (status: string) => {
   if (status === 'approved') return 'green';
   if (status === 'rejected') return 'red';
   return 'orange';
+};
+
+const tenantActionColor = (action?: string | null) => {
+  if (action === 'accepted') return 'green';
+  if (action === 'cancelled') return 'red';
+  return 'default';
+};
+
+const tenantActionLabel = (action?: string | null) => {
+  if (action === 'accepted') return '✓ Tenant Accepted';
+  if (action === 'cancelled') return '✗ Tenant Cancelled';
+  return null;
 };
 
 type Props = {
@@ -44,39 +66,78 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
   const [selectedReservation, setSelectedReservation] = useState<Reservation | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [updatingId, setUpdatingId] = useState<number | null>(null);
+  const [newTenantActionIds, setNewTenantActionIds] = useState<Set<number>>(new Set());
+  const [searchQuery, setSearchQuery] = useState('');
 
   const token = localStorage.getItem(AUTH_TOKEN_KEY);
 
-  const fetchReservations = async () => {
-    setLoading(true);
+  // KEY FIX: use a ref so the poll callback always reads the latest reservations
+  // without needing to be recreated (which would reset the interval).
+  const prevReservationsRef = useRef<Reservation[]>([]);
+  const hasLoadedOnce = useRef(false);
+
+  // ── Core fetch ────────────────────────────────────────────────────────────
+  const fetchReservations = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/reservations`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error(`Error: ${res.status}`);
       const data: Reservation[] = await res.json();
-      // exclude archived from Booking Notifications
-      setReservations(data.filter((r) => r.status !== 'archived'));
+      const filtered = data.filter(r => r.status !== 'archived');
+
+      // Compare against previous snapshot to find NEW tenant actions
+      if (hasLoadedOnce.current) {
+        const arrived: number[] = [];
+        filtered.forEach(incoming => {
+          if (!incoming.tenant_action) return;
+          const previous = prevReservationsRef.current.find(p => p.id === incoming.id);
+          // New action = incoming has one but previous didn't
+          if (!previous?.tenant_action) {
+            arrived.push(incoming.id);
+          }
+        });
+
+        if (arrived.length > 0) {
+          setNewTenantActionIds(prev => new Set([...prev, ...arrived]));
+          message.info({
+            content: `🔔 ${arrived.length} tenant(s) responded to their reservation!`,
+            duration: 6,
+          });
+        }
+      }
+
+      // Always update the ref snapshot and state
+      prevReservationsRef.current = filtered;
+      setReservations(filtered);
+      hasLoadedOnce.current = true;
     } catch (err) {
-      message.error('Could not load reservations. Please try again.');
+      if (!silent) message.error('Could not load reservations. Please try again.');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
+  // Initial load
   useEffect(() => {
-    fetchReservations();
+    fetchReservations(false);
   }, []);
 
+  // Background poll — created once, uses ref for comparison so no stale closure
+  useEffect(() => {
+    const id = setInterval(() => fetchReservations(true), POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, []);
+
+  // ── Approve / Reject ───────────────────────────────────────────────────────
   const updateStatus = async (id: number, status: 'approved' | 'rejected') => {
     setUpdatingId(id);
     try {
       let body: any = { status };
+
       if (status === 'rejected') {
-        // Step 1: collect rejection reason
-        const reason = await new Promise<string | null>((resolve) => {
+        const reason = await new Promise<string | null>(resolve => {
           let val = '';
           Modal.confirm({
             title: 'Reject reservation',
@@ -84,7 +145,12 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
             content: (
               <div>
                 <p>Please provide a reason for rejecting this reservation:</p>
-                <textarea onChange={(e: any) => { val = e.target.value; }} rows={6} style={{ width: '100%', padding: 8, height: 160 }} placeholder="Reason" />
+                <textarea
+                  onChange={(e: any) => { val = e.target.value; }}
+                  rows={6}
+                  style={{ width: '100%', padding: 8, height: 160 }}
+                  placeholder="Reason"
+                />
               </div>
             ),
             okText: 'Next',
@@ -93,27 +159,20 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
             onCancel: () => { resolve(null); },
           });
         });
-        if (reason === null) {
-          setUpdatingId(null);
-          return; // user cancelled
-        }
-
+        if (reason === null) { setUpdatingId(null); return; }
         const trimmed = String(reason).trim();
-        if (trimmed.length === 0) {
-          message.error('Rejection reason is required');
-          setUpdatingId(null);
-          return;
-        }
+        if (!trimmed) { message.error('Rejection reason is required'); setUpdatingId(null); return; }
 
-        // Step 2: confirm the rejection with the provided reason
-        const confirm = await new Promise<boolean>((resolve) => {
+        const confirmed = await new Promise<boolean>(resolve => {
           Modal.confirm({
             title: 'Are you sure?',
             width: 800,
             content: (
               <div>
                 <p>You're about to reject this tenant with the following reason:</p>
-                <div style={{ background: '#f6f8fb', padding: 12, borderRadius: 6, maxHeight: 240, overflowY: 'auto' }}>{trimmed}</div>
+                <div style={{ background: '#f6f8fb', padding: 12, borderRadius: 6, maxHeight: 240, overflowY: 'auto' }}>
+                  {trimmed}
+                </div>
               </div>
             ),
             okText: 'Confirm Reject',
@@ -122,43 +181,83 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
             onCancel: () => resolve(false),
           });
         });
-        if (!confirm) {
-          setUpdatingId(null);
-          return;
-        }
-
+        if (!confirmed) { setUpdatingId(null); return; }
         body.rejection_reason = trimmed;
+
+      } else if (status === 'approved') {
+        const reservation = reservations.find(r => r.id === id);
+        const currentOccupied = getOccupiedBeds(reservation?.dorm_id);
+        const capacity = reservation?.room_capacity || 0;
+        const spotsLeft = capacity - currentOccupied;
+        const isDormAtCapacity = spotsLeft <= 1;
+
+        const confirmed = await new Promise<boolean>(resolve => {
+          Modal.confirm({
+            title: 'Confirm Booking',
+            width: 600,
+            content: (
+              <div>
+                {isDormAtCapacity && (
+                  <Alert
+                    message="⚠️ Dorm is At/Near Capacity"
+                    description={
+                      spotsLeft === 1
+                        ? `After confirming this tenant, your dorm will have only ${spotsLeft} spot left. Once this tenant accepts, your dorm will be full.`
+                        : `Your dorm is already at capacity (${currentOccupied}/${capacity} beds occupied). Cannot add more tenants.`
+                    }
+                    type="warning"
+                    showIcon
+                    style={{ marginBottom: 16, borderRadius: 8 }}
+                  />
+                )}
+                <p>Are you sure you want to confirm this reservation?</p>
+                <div style={{ background: '#f3fbff', padding: 12, borderRadius: 6, marginTop: 12 }}>
+                  <div style={{ marginBottom: 8 }}>
+                    <Text strong>{reservation?.full_name}</Text><br />
+                    <Text type="secondary">{reservation?.dorm_name} · {reservation?.move_in_date}</Text>
+                  </div>
+                  <Text type="secondary">
+                    ₱{Number(reservation?.total_amount).toLocaleString()} for {reservation?.duration_months} month(s)
+                  </Text>
+                  <br />
+                  <Text type="secondary" style={{ marginTop: 8, display: 'block', fontSize: 12 }}>
+                    Beds: {currentOccupied}/{capacity} occupied
+                  </Text>
+                </div>
+              </div>
+            ),
+            okText: spotsLeft <= 0 ? 'Cannot Confirm (Full)' : 'Confirm Booking',
+            cancelText: 'Cancel',
+            okType: spotsLeft <= 0 ? 'default' : 'primary',
+            okButtonProps: { danger: spotsLeft <= 0, disabled: spotsLeft <= 0 },
+            onOk: () => spotsLeft > 0 ? resolve(true) : resolve(false),
+            onCancel: () => resolve(false),
+          });
+        });
+        if (!confirmed) { setUpdatingId(null); return; }
       }
 
       const res = await fetch(`${API_BASE}/reservations/${id}/status`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(body),
       });
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
-        const msg = errBody?.message || 'Failed to update';
-        throw new Error(msg);
+        throw new Error(errBody?.message || 'Failed to update');
       }
-
-      // Update UI without refetching
-      setReservations((prev) =>
-        prev.map((r) => (r.id === id ? { ...r, status } : r))
-      );
-      message.success(
-        status === 'approved' ? 'Booking confirmed!' : 'Booking rejected.'
-      );
+      setReservations(prev => prev.map(r => r.id === id ? { ...r, status } : r));
+      // Also update the ref
+      prevReservationsRef.current = prevReservationsRef.current.map(r => r.id === id ? { ...r, status } : r);
+      message.success(status === 'approved' ? 'Booking confirmed!' : 'Booking rejected.');
     } catch (err: any) {
-      console.error('Update status error:', err);
       message.error(err?.message || 'Failed to update reservation status.');
     } finally {
       setUpdatingId(null);
     }
   };
 
+  // ── Archive ────────────────────────────────────────────────────────────────
   const archiveReservation = async (id: number) => {
     setUpdatingId(id);
     try {
@@ -167,199 +266,326 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error('Failed to archive');
-      setReservations((prev) => prev.map((r) => (r.id === id ? { ...r, status: 'archived' } : r)));
+      setReservations(prev => prev.map(r => r.id === id ? { ...r, status: 'archived' } : r));
+      prevReservationsRef.current = prevReservationsRef.current.filter(r => r.id !== id);
       message.success('Reservation archived');
-    } catch (err) {
+    } catch {
       message.error('Failed to archive reservation.');
     } finally {
       setUpdatingId(null);
     }
   };
 
-  // delete moved to ArchivedNotifications page
-
   const openModal = (reservation: Reservation) => {
+    setNewTenantActionIds(prev => {
+      const next = new Set(prev);
+      next.delete(reservation.id);
+      return next;
+    });
     setSelectedReservation(reservation);
     setModalOpen(true);
   };
 
+  const getFilteredReservations = () => {
+    if (!searchQuery.trim()) return reservations;
+    
+    const query = searchQuery.toLowerCase();
+    return reservations.filter(r => 
+      r.full_name.toLowerCase().includes(query) ||
+      r.dorm_name.toLowerCase().includes(query) ||
+      r.location.toLowerCase().includes(query) ||
+      r.phone.toLowerCase().includes(query)
+    );
+  };
+
+  // Calculate occupied beds for a specific dorm
+  const getOccupiedBeds = (dorm_id?: number) => {
+    if (!dorm_id) return 0;
+    return reservations.filter(r => 
+      r.dorm_id === dorm_id && 
+      r.status === 'approved' && 
+      r.tenant_action === 'accepted'
+    ).length;
+  };
+
+  // Check if dorm is full
+  const isDormFull = () => {
+    if (reservations.length === 0) return false;
+    const firstReservation = reservations[0];
+    if (!firstReservation.room_capacity || !firstReservation.dorm_id) return false;
+    const occupied = getOccupiedBeds(firstReservation.dorm_id);
+    return occupied >= firstReservation.room_capacity;
+  };
+
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div style={{ padding: 24 }}>
-      <div style={{ maxWidth: 980, margin: '0 auto' }}>
+      <div style={{ maxWidth: 1300, margin: '0 auto 12px', display: 'flex', justifyContent: 'flex-start' }}>
+        <Button icon={<LeftOutlined />} onClick={() => onNavigate?.('home')}>Back</Button>
+      </div>
+
+      <div style={{ maxWidth: 1300, margin: '0 auto' }}>
         <Card
           title={<Title level={4} style={{ margin: 0 }}>Booking Notifications</Title>}
           extra={<Button onClick={() => onNavigate?.('archived')}>Archived</Button>}
           style={{ borderRadius: 12 }}
         >
+          {isDormFull() && (
+            <Alert
+              message="🎉 Your Dorm is Full!"
+              description={(() => {
+                const firstRes = reservations[0];
+                return `All ${firstRes.room_capacity} beds in ${firstRes.dorm_name} are now occupied. Congratulations!`;
+              })()}
+              type="success"
+              showIcon
+              closable
+              style={{ marginBottom: 20, borderRadius: 12 }}
+            />
+          )}
+          <div style={{ marginBottom: 20 }}>
+            <Input.Search
+              placeholder="Search dorms, owners, names, or phone..."
+              allowClear
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{ minWidth: 220, maxWidth: 360 }}
+            />
+          </div>
           {loading ? (
-            <div style={{ textAlign: 'center', padding: 48 }}>
-              <Spin size="large" />
-            </div>
+            <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" /></div>
           ) : reservations.length === 0 ? (
             <div style={{ textAlign: 'center', padding: 48 }}>
               <Text type="secondary">No reservations yet.</Text>
             </div>
+          ) : getFilteredReservations().length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 48 }}>
+              <Text type="secondary">No reservations match your search.</Text>
+            </div>
           ) : (
             <List
-              dataSource={reservations}
+              dataSource={getFilteredReservations()}
               split={false}
-              renderItem={(item) => (
-                <List.Item>
-                  <Card
-                    hoverable
-                    style={{
-                      width: '100%',
-                      borderRadius: 12,
-                      border: '1px solid #e9f1ff',
-                      background: '#f3fbff',
-                    }}
-                  >
-                    <Space direction="vertical" style={{ width: '100%' }}>
+              renderItem={item => {
+                const isNew = newTenantActionIds.has(item.id);
+                const actionLabel = tenantActionLabel(item.tenant_action);
 
-                      {/* Header */}
-                      <Row justify="space-between" align="middle">
-                        <Col>
-                          <Space align="center">
-                            <CalendarOutlined style={{ fontSize: 18, color: '#1890ff' }} />
-                            <div>
-                              <Text strong style={{ display: 'block' }}>New Booking</Text>
-                              <Text type="secondary">
-                                <ClockCircleOutlined style={{ marginRight: 4 }} />
-                                {new Date(item.created_at).toLocaleString()}
-                              </Text>
-                            </div>
-                          </Space>
-                        </Col>
-                        <Col>
-                          <Tag
-                            color={statusColor(item.status)}
-                            style={{ textTransform: 'capitalize', fontSize: 13, padding: '2px 10px' }}
-                          >
-                            {item.status}
-                          </Tag>
-                        </Col>
-                      </Row>
-
-                      {/* Details */}
+                return (
+                  <List.Item>
+                    <Badge.Ribbon
+                      text={isNew ? '🔔 Tenant Responded' : ''}
+                      color={isNew ? '#f5222d' : 'transparent'}
+                      style={{ display: isNew ? undefined : 'none' }}
+                    >
                       <Card
+                        hoverable
                         style={{
-                          borderRadius: 8,
-                          background: '#ffffff',
-                          border: '1px solid #eef6ff',
+                          width: '100%',
+                          borderRadius: 12,
+                          border: isNew ? '2px solid #f5222d' : '1px solid #e9f1ff',
+                          background: isNew ? '#fff1f0' : '#f3fbff',
+                          transition: 'border 0.3s, background 0.3s',
                         }}
+                        bodyStyle={{ padding: '20px 24px' }}
                       >
-                        <Row gutter={[16, 12]}>
-                          <Col xs={24} sm={16}>
-                            <Row gutter={[8, 8]}>
-                              <Col xs={24} sm={8}>
-                                <Text type="secondary" style={{ fontSize: 12 }}>STUDENT NAME</Text>
-                                <br />
-                                <Text strong>{item.full_name}</Text>
+                        <Space direction="vertical" style={{ width: '100%' }}>
+
+                          {/* Header */}
+                          <Row justify="space-between" align="middle">
+                            <Col>
+                              <Space align="center">
+                                <CalendarOutlined style={{ fontSize: 18, color: '#1890ff' }} />
+                                <div>
+                                  <Text strong style={{ display: 'block' }}>New Booking</Text>
+                                  <Text type="secondary">
+                                    <ClockCircleOutlined style={{ marginRight: 4 }} />
+                                    {new Date(item.created_at).toLocaleString()}
+                                  </Text>
+                                </div>
+                              </Space>
+                            </Col>
+                            <Col>
+                              <Space>
+                                <Tag
+                                  color={statusColor(item.status)}
+                                  style={{ textTransform: 'capitalize', fontSize: 13, padding: '2px 10px' }}
+                                >
+                                  {item.status}
+                                </Tag>
+
+                                {actionLabel && (
+                                  <Tooltip
+                                    title={
+                                      item.tenant_action === 'cancelled'
+                                        ? `Reason: ${item.cancel_reason || '—'}`
+                                        : `Accepted at ${item.tenant_action_at
+                                            ? new Date(item.tenant_action_at).toLocaleString()
+                                            : '—'}`
+                                    }
+                                  >
+                                    <Tag
+                                      color={tenantActionColor(item.tenant_action)}
+                                      icon={item.tenant_action === 'accepted'
+                                        ? <CheckCircleOutlined />
+                                        : <CloseCircleOutlined />}
+                                      style={{ fontSize: 13, padding: '2px 10px' }}
+                                    >
+                                      {actionLabel}
+                                    </Tag>
+                                  </Tooltip>
+                                )}
+                              </Space>
+                            </Col>
+                          </Row>
+
+                          {/* Cancellation reason banner */}
+                          {item.tenant_action === 'cancelled' && item.cancel_reason && (
+                            <div style={{
+                              background: '#fff1f0',
+                              border: '1px solid #ffa39e',
+                              borderRadius: 6,
+                              padding: '8px 12px',
+                            }}>
+                              <Text type="danger" strong>
+                                <CloseCircleOutlined style={{ marginRight: 6 }} />
+                                Tenant cancellation reason:
+                              </Text>
+                              <br />
+                              <Text>{item.cancel_reason}</Text>
+                            </div>
+                          )}
+
+                          {/* Detail card */}
+                          <Card style={{ borderRadius: 8, background: '#ffffff', border: '1px solid #eef6ff' }} bodyStyle={{ padding: '20px 24px' }}>
+                            <Row gutter={[20, 16]} align="top">
+                              <Col xs={24} sm={4}>
+                                <Text type="secondary" style={{ fontSize: 11, fontWeight: 600 }}>STUDENT NAME</Text><br />
+                                <Text strong style={{ fontSize: 14, marginTop: 4, display: 'block' }}>{item.full_name}</Text>
                               </Col>
-                              <Col xs={24} sm={8}>
-                                <Text type="secondary" style={{ fontSize: 12 }}>DORM NAME</Text>
-                                <br />
-                                <Text strong>{item.dorm_name}</Text>
+                              <Col xs={24} sm={4}>
+                                <Text type="secondary" style={{ fontSize: 11, fontWeight: 600 }}>DORM NAME</Text><br />
+                                <Text strong style={{ fontSize: 14, marginTop: 4, display: 'block' }}>{item.dorm_name}</Text>
+                                {item.room_capacity && (() => {
+                                  const occupied = getOccupiedBeds(item.dorm_id);
+                                  const unoccupied = (item.room_capacity || 0) - occupied;
+                                  const isFull = unoccupied === 0;
+                                  return (
+                                    <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+                                      <div style={{
+                                        background: isFull ? '#d4380d' : '#2D4A7C',
+                                        color: 'white',
+                                        padding: '4px 12px',
+                                        borderRadius: 20,
+                                        fontSize: 12,
+                                        fontWeight: 600,
+                                      }}>
+                                        Occupied Beds: {occupied}
+                                      </div>
+                                      <div style={{
+                                        background: isFull ? '#d4380d' : '#2D4A7C',
+                                        color: 'white',
+                                        padding: '4px 12px',
+                                        borderRadius: 20,
+                                        fontSize: 12,
+                                        fontWeight: 600,
+                                      }}>
+                                        Unoccupied Beds: {unoccupied}
+                                      </div>
+                                      {isFull && (
+                                        <div style={{
+                                          background: '#faad14',
+                                          color: 'white',
+                                          padding: '4px 12px',
+                                          borderRadius: 20,
+                                          fontSize: 12,
+                                          fontWeight: 600,
+                                        }}>
+                                          🔴 FULL
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
                               </Col>
-                              <Col xs={24} sm={8}>
-                                <Text type="secondary" style={{ fontSize: 12 }}>MOVE-IN DATE</Text>
-                                <br />
-                                <Text strong>{item.move_in_date}</Text>
+                              <Col xs={24} sm={4}>
+                                <Text type="secondary" style={{ fontSize: 11, fontWeight: 600 }}>MOVE-IN DATE</Text><br />
+                                <Text strong style={{ fontSize: 14, marginTop: 4, display: 'block' }}>{item.move_in_date}</Text>
+                              </Col>
+                              <Col xs={24} sm={5}>
+                                <Text type="secondary" style={{ fontSize: 11, fontWeight: 600 }}>PAYMENT METHOD</Text><br />
+                                <Tag color="blue" style={{ marginTop: 4 }}>
+                                  {item.payment_method === 'cash_on_move_in' ? 'Cash on Move-In' : item.payment_method}
+                                </Tag>
+                              </Col>
+                              <Col xs={24} sm={7}>
+                                <Text type="secondary" style={{ fontSize: 11, fontWeight: 600 }}>TOTAL AMOUNT</Text><br />
+                                <Text strong style={{ color: '#2979FF', fontSize: 15, marginTop: 4, display: 'block' }}>
+                                  ₱{Number(item.total_amount).toLocaleString()}
+                                </Text>
                               </Col>
                             </Row>
-                          </Col>
 
-                          <Col
-                            xs={24}
-                            sm={8}
-                            style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}
-                          >
-                            <div>
-                              <Text type="secondary" style={{ fontSize: 12 }}>PAYMENT METHOD</Text>
-                              <br />
-                              <Tag color="blue">
-                                {item.payment_method === 'cash_on_move_in'
-                                  ? 'Cash on Move-In'
-                                  : item.payment_method}
-                              </Tag>
-                            </div>
-                            <div style={{ marginTop: 8 }}>
-                              <Text type="secondary" style={{ fontSize: 12 }}>TOTAL AMOUNT</Text>
-                              <br />
-                              <Text strong style={{ color: '#2979FF' }}>
-                                ₱{Number(item.total_amount).toLocaleString()}
-                              </Text>
-                            </div>
-                          </Col>
-                        </Row>
+                            <Divider style={{ margin: '16px 0' }} />
 
-                        <Divider style={{ margin: '12px 0' }} />
+                            <Row justify="space-between" align="middle">
+                              <Col>
+                                <Space align="center" size={12}>
+                                  <Avatar size={48} icon={<UserOutlined />} />
+                                  <div>
+                                    <Text strong style={{ fontSize: 14 }}>{item.full_name}</Text><br />
+                                    <Text type="secondary" style={{ fontSize: 12 }}>{item.phone} · {item.duration_months} month(s)</Text>
+                                  </div>
+                                </Space>
+                              </Col>
+                              <Col>
+                                <Space>
+                                  <Button onClick={() => openModal(item)}>View Details</Button>
 
-                        <Row justify="space-between" align="middle">
-                          <Col>
-                            <Space align="center">
-                              <Avatar size={48} icon={<UserOutlined />} />
-                              <div>
-                                <Text strong>{item.full_name}</Text>
-                                <br />
-                                <Text type="secondary">
-                                  {item.phone} · {item.duration_months} month(s)
-                                </Text>
-                              </div>
-                            </Space>
-                          </Col>
+                                  {item.status === 'pending' && (
+                                    <>
+                                      <Button
+                                        danger
+                                        loading={updatingId === item.id}
+                                        onClick={() => updateStatus(item.id, 'rejected')}
+                                      >
+                                        Reject
+                                      </Button>
+                                      <Button
+                                        type="primary"
+                                        loading={updatingId === item.id}
+                                        onClick={() => updateStatus(item.id, 'approved')}
+                                      >
+                                        Confirm Booking
+                                      </Button>
+                                    </>
+                                  )}
 
-                          <Col>
-                            <Space>
-                              <Button onClick={() => openModal(item)}>
-                                View Details
-                              </Button>
-                              {item.status === 'pending' && (
-                                <>
-                                  <Button
-                                    danger
-                                    loading={updatingId === item.id}
-                                    onClick={() => updateStatus(item.id, 'rejected')}
-                                  >
-                                    Reject
-                                  </Button>
-                                  <Button
-                                    type="primary"
-                                    loading={updatingId === item.id}
-                                    onClick={() => updateStatus(item.id, 'approved')}
-                                  >
-                                    Confirm Booking
-                                  </Button>
-                                </>
-                              )}
+                                  {item.status !== 'archived' && (
+                                    <Button
+                                      onClick={() => archiveReservation(item.id)}
+                                      loading={updatingId === item.id}
+                                    >
+                                      Archive
+                                    </Button>
+                                  )}
 
-                              {item.status !== 'archived' && (
-                                <Button
-                                  onClick={() => archiveReservation(item.id)}
-                                  loading={updatingId === item.id}
-                                >
-                                  Archive
-                                </Button>
-                              )}
+                                  {item.status === 'approved' && !item.tenant_action && (
+                                    <Tag color="green" style={{ padding: '4px 12px', fontSize: 13 }}>✓ Confirmed</Tag>
+                                  )}
+                                  {item.status === 'rejected' && !item.tenant_action && (
+                                    <Tag color="red" style={{ padding: '4px 12px', fontSize: 13 }}>✗ Rejected</Tag>
+                                  )}
+                                </Space>
+                              </Col>
+                            </Row>
+                          </Card>
 
-                              {item.status === 'approved' && (
-                                <Tag color="green" style={{ padding: '4px 12px', fontSize: 13 }}>
-                                  ✓ Confirmed
-                                </Tag>
-                              )}
-                              {item.status === 'rejected' && (
-                                <Tag color="red" style={{ padding: '4px 12px', fontSize: 13 }}>
-                                  ✗ Rejected
-                                </Tag>
-                              )}
-                            </Space>
-                          </Col>
-                        </Row>
+                        </Space>
                       </Card>
-                    </Space>
-                  </Card>
-                </List.Item>
-              )}
+                    </Badge.Ribbon>
+                  </List.Item>
+                );
+              }}
             />
           )}
         </Card>
@@ -370,62 +596,58 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
         title="Reservation Details"
         open={modalOpen}
         onCancel={() => setModalOpen(false)}
-        footer={[
-          <Button key="close" onClick={() => setModalOpen(false)}>
-            Close
-          </Button>,
-        ]}
+        footer={[<Button key="close" onClick={() => setModalOpen(false)}>Close</Button>]}
         width={600}
       >
         {selectedReservation && (
           <Descriptions bordered column={2} size="small">
-            <Descriptions.Item label="Full Name" span={2}>
-              {selectedReservation.full_name}
-            </Descriptions.Item>
-            <Descriptions.Item label="Phone">
-              {selectedReservation.phone}
-            </Descriptions.Item>
-            <Descriptions.Item label="Dorm Name">
-              {selectedReservation.dorm_name}
-            </Descriptions.Item>
-            <Descriptions.Item label="Location" span={2}>
-              {selectedReservation.location}
-            </Descriptions.Item>
-            <Descriptions.Item label="Move-in Date">
-              {selectedReservation.move_in_date}
-            </Descriptions.Item>
-            <Descriptions.Item label="Duration">
-              {selectedReservation.duration_months} month(s)
-            </Descriptions.Item>
-            <Descriptions.Item label="Price / Month">
-              ₱{Number(selectedReservation.price_per_month).toLocaleString()}
-            </Descriptions.Item>
-            <Descriptions.Item label="Deposit">
-              ₱{Number(selectedReservation.deposit).toLocaleString()}
-            </Descriptions.Item>
-            <Descriptions.Item label="Advance">
-              ₱{Number(selectedReservation.advance).toLocaleString()}
-            </Descriptions.Item>
+            <Descriptions.Item label="Full Name" span={2}>{selectedReservation.full_name}</Descriptions.Item>
+            <Descriptions.Item label="Phone">{selectedReservation.phone}</Descriptions.Item>
+            <Descriptions.Item label="Dorm Name">{selectedReservation.dorm_name}</Descriptions.Item>
+            <Descriptions.Item label="Location" span={2}>{selectedReservation.location}</Descriptions.Item>
+            <Descriptions.Item label="Move-in Date">{selectedReservation.move_in_date}</Descriptions.Item>
+            <Descriptions.Item label="Duration">{selectedReservation.duration_months} month(s)</Descriptions.Item>
+            <Descriptions.Item label="Price / Month">₱{Number(selectedReservation.price_per_month).toLocaleString()}</Descriptions.Item>
+            <Descriptions.Item label="Deposit">₱{Number(selectedReservation.deposit).toLocaleString()}</Descriptions.Item>
+            <Descriptions.Item label="Advance">₱{Number(selectedReservation.advance).toLocaleString()}</Descriptions.Item>
             <Descriptions.Item label="Total Amount">
-              <Text strong style={{ color: '#2979FF' }}>
-                ₱{Number(selectedReservation.total_amount).toLocaleString()}
-              </Text>
+              <Text strong style={{ color: '#2979FF' }}>₱{Number(selectedReservation.total_amount).toLocaleString()}</Text>
             </Descriptions.Item>
             <Descriptions.Item label="Payment Method" span={2}>
-              {selectedReservation.payment_method === 'cash_on_move_in'
-                ? 'Cash on Move-In'
-                : selectedReservation.payment_method}
+              {selectedReservation.payment_method === 'cash_on_move_in' ? 'Cash on Move-In' : selectedReservation.payment_method}
             </Descriptions.Item>
-            <Descriptions.Item label="Notes" span={2}>
-              {selectedReservation.notes || '—'}
-            </Descriptions.Item>
-            <Descriptions.Item label="Status" span={2}>
-              <Tag
-                color={statusColor(selectedReservation.status)}
-                style={{ textTransform: 'capitalize' }}
-              >
+            <Descriptions.Item label="Notes" span={2}>{selectedReservation.notes || '—'}</Descriptions.Item>
+            <Descriptions.Item label="Owner Status" span={2}>
+              <Tag color={statusColor(selectedReservation.status)} style={{ textTransform: 'capitalize' }}>
                 {selectedReservation.status}
               </Tag>
+            </Descriptions.Item>
+            <Descriptions.Item label="Tenant Response" span={2}>
+              {selectedReservation.tenant_action ? (
+                <Space direction="vertical">
+                  <Tag
+                    color={tenantActionColor(selectedReservation.tenant_action)}
+                    icon={selectedReservation.tenant_action === 'accepted'
+                      ? <CheckCircleOutlined />
+                      : <CloseCircleOutlined />}
+                    style={{ fontSize: 13 }}
+                  >
+                    {tenantActionLabel(selectedReservation.tenant_action)}
+                  </Tag>
+                  {selectedReservation.tenant_action_at && (
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      at {new Date(selectedReservation.tenant_action_at).toLocaleString()}
+                    </Text>
+                  )}
+                  {selectedReservation.tenant_action === 'cancelled' && selectedReservation.cancel_reason && (
+                    <div style={{ background: '#fff1f0', padding: 8, borderRadius: 6, marginTop: 4 }}>
+                      <Text type="danger">Reason: {selectedReservation.cancel_reason}</Text>
+                    </div>
+                  )}
+                </Space>
+              ) : (
+                <Text type="secondary">No response yet</Text>
+              )}
             </Descriptions.Item>
             <Descriptions.Item label="Submitted At" span={2}>
               {new Date(selectedReservation.created_at).toLocaleString()}
