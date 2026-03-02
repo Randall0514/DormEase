@@ -89,18 +89,18 @@ const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onLoginSuccess }) => 
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          overflowY: 'auto', // allow scrolling inside login only
+          overflowY: 'auto',
         }}
       >
         <Row
-          gutter={[32, 32]}
+          gutter={[0, 0]}
           style={{
-            maxWidth: '90vw',
-            margin: '0 auto',
-            background: '#79acff',
+            maxWidth: '1000px',
+            width: '100%',
+            height: 'auto',
             minHeight: 600,
-            borderRadius: 32,
-            boxShadow: '0 24px 60px rgba(15, 23, 42, 0.25)',
+            borderRadius: 12,
+            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.15)',
             overflow: 'hidden',
           }}
         >
@@ -109,93 +109,65 @@ const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onLoginSuccess }) => 
             xs={24}
             md={12}
             style={{
-              background: '#4f73ff',
+              background: 'linear-gradient(135deg, #4f73ff 0%, #5b7fee 100%)',
               color: '#fff',
-              padding: '40px 32px',
+              padding: '60px 48px',
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'flex-start',
               justifyContent: 'center',
               position: 'relative',
+              overflow: 'hidden',
             }}
           >
-            {/* Decorative circles */}
+            {/* Decorative gradient elements */}
             <div
               style={{
                 position: 'absolute',
-                top: 32,
-                left: 32,
-                width: 71,
-                height: 74,
-                borderRadius: 140,
-                background: '#1e1e1e',
-                opacity: 0.67,
+                top: -100,
+                right: -100,
+                width: 300,
+                height: 300,
+                borderRadius: '50%',
+                background: 'rgba(255, 255, 255, 0.08)',
               }}
             />
             <div
               style={{
                 position: 'absolute',
-                top: 32,
-                right: 32,
-                width: 71,
-                height: 74,
-                borderRadius: 140,
-                background: '#1e1e1e',
-                opacity: 0.67,
-              }}
-            />
-            <div
-              style={{
-                position: 'absolute',
-                bottom: 32,
-                left: 32,
-                width: 71,
-                height: 74,
-                borderRadius: 140,
-                background: '#1e1e1e',
-                opacity: 0.67,
-              }}
-            />
-            <div
-              style={{
-                position: 'absolute',
-                bottom: 32,
-                right: 32,
-                width: 71,
-                height: 74,
-                borderRadius: 140,
-                background: '#1e1e1e',
-                opacity: 0.67,
+                bottom: -50,
+                left: -50,
+                width: 200,
+                height: 200,
+                borderRadius: '50%',
+                background: 'rgba(255, 255, 255, 0.05)',
               }}
             />
 
-            <div style={{ textAlign: 'left', marginBottom: 24 }}>
+            <div style={{ zIndex: 1 }}>
               <Title
-                level={2}
+                level={1}
                 style={{
                   color: '#fff',
-                  marginBottom: 12,
-                  fontSize: 36,
+                  marginBottom: 24,
+                  fontSize: 42,
+                  fontWeight: 700,
+                  margin: 0,
                 }}
               >
-                Welcome back!
+                DormEase
               </Title>
-              <Text style={{ fontSize: 18, color: '#e0ecff' }}>
-                You can sign up with your existing account
+              <Text
+                style={{
+                  fontSize: 16,
+                  color: '#e0ecff',
+                  lineHeight: 1.6,
+                  fontWeight: 400,
+                }}
+              >
+                Manage your dormitory accommodations with ease.
               </Text>
             </div>
-
-            <Title
-              style={{
-                color: '#fff',
-                fontSize: 52,
-                margin: 0,
-                fontFamily: 'cursive',
-                letterSpacing: 1,
-              }}
-            >
-              DormEase
-            </Title>
           </Col>
 
           {/* Right panel */}
@@ -203,7 +175,7 @@ const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onLoginSuccess }) => 
             xs={24}
             md={12}
             style={{
-              padding: '40px 32px',
+              padding: '60px 48px',
               background: '#79acff',
               display: 'flex',
               alignItems: 'center',
@@ -213,11 +185,32 @@ const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onLoginSuccess }) => 
             <div
               style={{
                 width: '100%',
-                maxWidth: 450,
-                marginLeft: 'auto',
-                marginRight: 'auto',
+                maxWidth: 400,
               }}
             >
+              <Title
+                level={2}
+                style={{
+                  textAlign: 'center',
+                  marginBottom: 8,
+                  color: '#111827',
+                  fontSize: 28,
+                }}
+              >
+                Welcome back
+              </Title>
+              <Text
+                style={{
+                  display: 'block',
+                  textAlign: 'center',
+                  marginBottom: 32,
+                  color: '#374151',
+                  fontSize: 14,
+                }}
+              >
+                Sign in to your account to continue
+              </Text>
+
               <Form
                 form={form}
                 layout="vertical"
@@ -226,51 +219,104 @@ const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onLoginSuccess }) => 
                 style={{ width: '100%' }}
               >
                 <Form.Item
-                  label="Username or Email"
+                  label={
+                    <span style={{ color: '#1f2937', fontWeight: 600 }}>
+                      Email or Username
+                    </span>
+                  }
                   name="username"
-                  rules={[{ required: true, message: 'Please enter your username or email' }]}
+                  rules={[
+                    { required: true, message: 'Please enter your email or username' },
+                  ]}
+                  style={{ marginBottom: 20 }}
                 >
-                  <Input placeholder="Enter your username" size="large" />
+                  <Input
+                    placeholder="name@example.com"
+                    size="large"
+                    style={{
+                      borderRadius: 6,
+                      borderColor: '#cbd5e1',
+                      fontSize: 14,
+                    }}
+                  />
                 </Form.Item>
 
                 <Form.Item
-                  label="Password"
+                  label={
+                    <span style={{ color: '#1f2937', fontWeight: 600 }}>
+                      Password
+                    </span>
+                  }
                   name="password"
                   rules={[{ required: true, message: 'Please enter your password' }]}
+                  style={{ marginBottom: 12 }}
                 >
-                  <Input.Password placeholder="Enter your password" size="large" />
+                  <Input.Password
+                    placeholder="Enter your password"
+                    size="large"
+                    style={{
+                      borderRadius: 6,
+                      borderColor: '#cbd5e1',
+                      fontSize: 14,
+                    }}
+                  />
                 </Form.Item>
 
-                <Form.Item
-                  name="remember"
-                  valuePropName="checked"
-                  style={{ marginBottom: 8 }}
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: 24,
+                  }}
                 >
-                  <Checkbox>Remember me</Checkbox>
-                </Form.Item>
-
-                <div style={{ textAlign: 'right', marginBottom: 24 }}>
-                  <Button type="link" onClick={handleForgotPassword}>
+                  <Form.Item
+                    name="remember"
+                    valuePropName="checked"
+                    style={{ margin: 0 }}
+                  >
+                    <Checkbox style={{ color: '#374151' }}>Remember me</Checkbox>
+                  </Form.Item>
+                  <Button
+                    type="link"
+                    onClick={handleForgotPassword}
+                    style={{ padding: 0, color: '#4f73ff' }}
+                  >
                     Forgot password?
                   </Button>
                 </div>
 
-                <Form.Item style={{ marginBottom: 24 }}>
+                <Form.Item style={{ marginBottom: 20 }}>
                   <Button
                     type="primary"
                     htmlType="submit"
                     size="large"
                     block
-                    style={{ borderRadius: 8, height: 56 }}
+                    style={{
+                      borderRadius: 6,
+                      height: 48,
+                      background: '#4f73ff',
+                      border: 'none',
+                      fontSize: 15,
+                      fontWeight: 600,
+                    }}
                   >
-                    Login
+                    Sign in
                   </Button>
                 </Form.Item>
 
                 <div style={{ textAlign: 'center' }}>
-                  <Text>Don&apos;t have an account? </Text>
-                  <Button type="link" onClick={handleSignUp}>
-                    Sign up
+                  <Text style={{ color: '#374151' }}>Don&apos;t have an account? </Text>
+                  <Button
+                    type="link"
+                    onClick={handleSignUp}
+                    style={{
+                      padding: 0,
+                      color: '#4f73ff',
+                      fontWeight: 600,
+                    }}
+                  >
+                    Create one
                   </Button>
                 </div>
               </Form>

@@ -689,8 +689,8 @@ async function ensureSchema(): Promise<void> {
 async function startServer() {
   await ensureSchema();
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running at http://192.168.68.113:${PORT}`);
+    console.log(`Server running at http://192.168.68.102:${PORT}`);
   });
 }
 
-startServer();
+startServer(); 

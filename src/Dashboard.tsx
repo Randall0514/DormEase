@@ -203,6 +203,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
         const currentOccupied = getOccupiedBeds(reservation?.dorm_id);
         const capacity = reservation?.room_capacity || 0;
         const spotsLeft = capacity - currentOccupied;
+        
+        // If dorm is full, show error and return
+        if (spotsLeft <= 0) {
+          message.error('This dorm is at full capacity. Cannot confirm this reservation.');
+          setUpdatingId(null);
+          return;
+        }
+        
         const isDormAtCapacity = spotsLeft <= 1;
 
         const confirm = await new Promise<boolean>((resolve) => {
@@ -213,11 +221,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
               <div>
                 {isDormAtCapacity && (
                   <Alert
-                    message="⚠️ Dorm is At/Near Capacity"
+                    message="⚠️ Dorm is Near Capacity"
                     description={
-                      spotsLeft === 1
-                        ? `After confirming this tenant, your dorm will have only ${spotsLeft} spot left. Once this tenant accepts, your dorm will be full.`
-                        : `Your dorm is already at capacity (${currentOccupied}/${capacity} beds occupied). Cannot add more tenants.`
+                      `After confirming this tenant, your dorm will have only ${spotsLeft - 1} spot left. Once this tenant accepts, your dorm will be full.`
                     }
                     type="warning"
                     showIcon
@@ -240,11 +246,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
                 </div>
               </div>
             ),
-            okText: spotsLeft <= 0 ? 'Cannot Confirm (Full)' : 'Confirm Booking',
+            okText: 'Confirm Booking',
             cancelText: 'Cancel',
-            okType: spotsLeft <= 0 ? 'default' : 'primary',
-            okButtonProps: { danger: spotsLeft <= 0, disabled: spotsLeft <= 0 },
-            onOk: () => spotsLeft > 0 ? resolve(true) : resolve(false),
+            okType: 'primary',
+            onOk: () => resolve(true),
             onCancel: () => resolve(false),
           });
         });
@@ -435,6 +440,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
             <Checkbox.Group
               options={[
                 { label: 'WiFi', value: 'wifi' },
+                { label: 'Water', value: 'water' },
+                { label: 'Electricity', value: 'electricity' },
                 { label: 'Bed Frame', value: 'bedFrame' },
                 { label: 'Foam', value: 'foam' },
                 { label: 'Kitchen', value: 'kitchen' },
@@ -673,26 +680,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
                             >
                               Reject
                             </Button>
-                            {(() => {
-                              const currentOccupied = getOccupiedBeds(notif.dorm_id);
-                              const capacity = notif.room_capacity || 0;
-                              const spotsLeft = capacity - currentOccupied;
-                              const isDormFull = spotsLeft <= 0;
-                              return (
-                                <Button
-                                  size="small"
-                                  type={isDormFull ? "default" : "primary"}
-                                  danger={isDormFull}
-                                  icon={<CheckOutlined />}
-                                  loading={updatingId === notif.id}
-                                  disabled={isDormFull}
-                                  onClick={() => updateStatus(notif.id, 'approved')}
-                                  title={isDormFull ? 'Dorm is at capacity' : ''}
-                                >
-                                  {isDormFull ? 'Full' : 'Confirm'}
-                                </Button>
-                              );
-                            })()}
+                            <Button
+                              size="small"
+                              type="primary"
+                              icon={<CheckOutlined />}
+                              loading={updatingId === notif.id}
+                              onClick={() => updateStatus(notif.id, 'approved')}
+                            >
+                              Confirm
+                            </Button>
                           </div>
                         </div>
                       ))
