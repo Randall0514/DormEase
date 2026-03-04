@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  Grid,
   Card, List, Tag, Typography, Row, Col, Space,
   Avatar, Button, Divider, Spin, Modal, Descriptions, message, Badge, Tooltip, Input, Alert
 } from 'antd';
@@ -9,6 +10,7 @@ import {
 } from '@ant-design/icons';
 
 const { Title, Text } = Typography;
+const { useBreakpoint } = Grid;
 
 const API_BASE = 'http://localhost:3000';
 const AUTH_TOKEN_KEY = 'dormease_token';
@@ -61,6 +63,9 @@ type Props = {
 };
 
 const Notifications: React.FC<Props> = ({ onNavigate }) => {
+  const screens = useBreakpoint();
+  const isMobile = !screens.md;
+
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedReservation, setSelectedReservation] = useState<Reservation | null>(null);
@@ -141,7 +146,7 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
           let val = '';
           Modal.confirm({
             title: 'Reject reservation',
-            width: 800,
+            width: isMobile ? 360 : 800,
             content: (
               <div>
                 <p>Please provide a reason for rejecting this reservation:</p>
@@ -166,7 +171,7 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
         const confirmed = await new Promise<boolean>(resolve => {
           Modal.confirm({
             title: 'Are you sure?',
-            width: 800,
+            width: isMobile ? 360 : 800,
             content: (
               <div>
                 <p>You're about to reject this tenant with the following reason:</p>
@@ -194,7 +199,7 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
         const confirmed = await new Promise<boolean>(resolve => {
           Modal.confirm({
             title: 'Confirm Booking',
-            width: 600,
+            width: isMobile ? 360 : 600,
             content: (
               <div>
                 {isDormAtCapacity && (
@@ -319,12 +324,12 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div style={{ padding: 24 }}>
-      <div style={{ maxWidth: 1300, margin: '0 auto 12px', display: 'flex', justifyContent: 'flex-start' }}>
+    <div style={{ padding: isMobile ? 12 : 24, overflowX: 'hidden' }}>
+      <div style={{ maxWidth: 1300, width: '100%', margin: '0 auto 12px', display: 'flex', justifyContent: 'flex-start' }}>
         <Button icon={<LeftOutlined />} onClick={() => onNavigate?.('home')}>Back</Button>
       </div>
 
-      <div style={{ maxWidth: 1300, margin: '0 auto' }}>
+      <div style={{ maxWidth: 1300, width: '100%', margin: '0 auto' }}>
         <Card
           title={<Title level={4} style={{ margin: 0 }}>Booking Notifications</Title>}
           extra={<Button onClick={() => onNavigate?.('archived')}>Archived</Button>}
@@ -349,7 +354,7 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
               allowClear
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              style={{ minWidth: 220, maxWidth: 360 }}
+              style={{ width: '100%', maxWidth: isMobile ? '100%' : 360 }}
             />
           </div>
           {loading ? (
@@ -391,7 +396,7 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
                         <Space direction="vertical" style={{ width: '100%' }}>
 
                           {/* Header */}
-                          <Row justify="space-between" align="middle">
+                          <Row justify="space-between" align={isMobile ? 'top' : 'middle'} gutter={[8, 8]}>
                             <Col>
                               <Space align="center">
                                 <CalendarOutlined style={{ fontSize: 18, color: '#1890ff' }} />
@@ -405,7 +410,7 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
                               </Space>
                             </Col>
                             <Col>
-                              <Space>
+                              <Space style={{ flexWrap: 'wrap' }}>
                                 <Tag
                                   color={statusColor(item.status)}
                                   style={{ textTransform: 'capitalize', fontSize: 13, padding: '2px 10px' }}
@@ -470,7 +475,7 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
                                   const unoccupied = (item.room_capacity || 0) - occupied;
                                   const isFull = unoccupied === 0;
                                   return (
-                                    <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+                                    <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                                       <div style={{
                                         background: isFull ? '#d4380d' : '#2D4A7C',
                                         color: 'white',
@@ -527,7 +532,7 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
 
                             <Divider style={{ margin: '16px 0' }} />
 
-                            <Row justify="space-between" align="middle">
+                            <Row justify="space-between" align="middle" gutter={[12, 12]}>
                               <Col>
                                 <Space align="center" size={12}>
                                   <Avatar size={48} icon={<UserOutlined />} />
@@ -538,7 +543,7 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
                                 </Space>
                               </Col>
                               <Col>
-                                <Space>
+                                <Space wrap>
                                   <Button onClick={() => openModal(item)}>View Details</Button>
 
                                   {item.status === 'pending' && (
@@ -597,7 +602,7 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
         open={modalOpen}
         onCancel={() => setModalOpen(false)}
         footer={[<Button key="close" onClick={() => setModalOpen(false)}>Close</Button>]}
-        width={600}
+        width={isMobile ? '95vw' : 600}
       >
         {selectedReservation && (
           <Descriptions bordered column={2} size="small">

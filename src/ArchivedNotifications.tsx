@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Card, List, Tag, Typography, Row, Col, Space, Avatar, Button, Divider, Spin, Modal, Descriptions, message } from 'antd';
+import { Card, List, Tag, Typography, Row, Col, Space, Avatar, Button, Divider, Spin, Modal, Descriptions, message, Grid } from 'antd';
 import { CalendarOutlined, UserOutlined, ClockCircleOutlined } from '@ant-design/icons';
 
 const { Title, Text } = Typography;
+const { useBreakpoint } = Grid;
 
 const API_BASE = 'http://localhost:3000';
 const AUTH_TOKEN_KEY = 'dormease_token';
@@ -35,6 +36,9 @@ const statusColor = (status: string) => {
 type Props = { onNavigate?: (section: string) => void };
 
 const ArchivedNotifications: React.FC<Props> = ({ onNavigate }) => {
+  const screens = useBreakpoint();
+  const isMobile = !screens.md;
+
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedReservation, setSelectedReservation] = useState<Reservation | null>(null);
@@ -112,8 +116,8 @@ const ArchivedNotifications: React.FC<Props> = ({ onNavigate }) => {
   };
 
   return (
-    <div style={{ padding: 24 }}>
-      <div style={{ maxWidth: 980, margin: '0 auto' }}>
+    <div style={{ padding: isMobile ? 12 : 24, overflowX: 'hidden' }}>
+      <div style={{ maxWidth: 980, width: '100%', margin: '0 auto' }}>
         <Card title={<Title level={4} style={{ margin: 0 }}>Archived Notifications</Title>} extra={<Button onClick={() => onNavigate?.('notifications')}>Back</Button>} style={{ borderRadius: 12 }}>
           {loading ? (
             <div style={{ textAlign: 'center', padding: 48 }}>
@@ -187,7 +191,7 @@ const ArchivedNotifications: React.FC<Props> = ({ onNavigate }) => {
 
                         <Divider style={{ margin: '12px 0' }} />
 
-                        <Row justify="space-between" align="middle">
+                        <Row justify="space-between" align="middle" gutter={[12, 12]}>
                           <Col>
                             <Space align="center">
                               <Avatar size={48} icon={<UserOutlined />} />
@@ -200,7 +204,7 @@ const ArchivedNotifications: React.FC<Props> = ({ onNavigate }) => {
                           </Col>
 
                           <Col>
-                            <Space>
+                            <Space wrap>
                               <Button onClick={() => openModal(item)}>View Details</Button>
                               <Button onClick={() => unarchiveReservation(item.id)} loading={updatingId === item.id}>Unarchive</Button>
                               <Button danger onClick={() => deleteReservation(item.id)} loading={updatingId === item.id}>Delete</Button>
@@ -217,7 +221,7 @@ const ArchivedNotifications: React.FC<Props> = ({ onNavigate }) => {
         </Card>
       </div>
 
-      <Modal title="Reservation Details" open={modalOpen} onCancel={() => setModalOpen(false)} footer={[<Button key="close" onClick={() => setModalOpen(false)}>Close</Button>]} width={600}>
+      <Modal title="Reservation Details" open={modalOpen} onCancel={() => setModalOpen(false)} footer={[<Button key="close" onClick={() => setModalOpen(false)}>Close</Button>]} width={isMobile ? '95vw' : 600}>
         {selectedReservation && (
           <Descriptions bordered column={2} size="small">
             <Descriptions.Item label="Full Name" span={2}>{selectedReservation.full_name}</Descriptions.Item>

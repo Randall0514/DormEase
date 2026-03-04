@@ -2,17 +2,26 @@ import { useState, useEffect } from 'react';
 import './App.css';
 import Login from './Login';
 import Signup from './Signup';
+import VerifyOTP from './VerifyOTP';
 import Dashboard from './Dashboard';
 
 const AUTH_TOKEN_KEY = 'dormease_token';
 const API_BASE = 'http://localhost:3000';
 
-type View = 'login' | 'signup' | 'dashboard';
+type View = 'login' | 'signup' | 'verifyOtp' | 'dashboard';
+
+interface SignupData {
+  fullName: string;
+  username: string;
+  email: string;
+  password: string;
+}
 
 function App() {
   const [view, setView] = useState<View>('login');
   const [isNewAccount, setIsNewAccount] = useState(false);
   const [sessionChecked, setSessionChecked] = useState(false);
+  const [signupData, setSignupData] = useState<SignupData | null>(null);
 
   useEffect(() => {
     const token = localStorage.getItem(AUTH_TOKEN_KEY);
@@ -68,9 +77,22 @@ function App() {
     return (
       <Signup
         onNavigateToLogin={() => setView('login')}
-        onSignupSuccess={() => {
-          setIsNewAccount(true);
-          setView('dashboard');
+        onContinueToVerify={(data) => {
+          setSignupData(data);
+          setView('verifyOtp');
+        }}
+      />
+    );
+  }
+
+  if (view === 'verifyOtp' && signupData) {
+    return (
+      <VerifyOTP
+        signupData={signupData}
+        onBack={() => setView('signup')}
+        onVerifySuccess={() => {
+          setSignupData(null);
+          setView('login');
         }}
       />
     );

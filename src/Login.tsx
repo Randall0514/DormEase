@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   Layout,
+  Grid,
   Row,
   Col,
   Typography,
@@ -13,6 +14,7 @@ import {
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
+const { useBreakpoint } = Grid;
 
 const AUTH_TOKEN_KEY = 'dormease_token';
 
@@ -22,6 +24,8 @@ interface LoginProps {
 }
 
 const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onLoginSuccess }) => {
+  const screens = useBreakpoint();
+  const isMobile = !screens.md;
   const [form] = Form.useForm();
 
   const handleSubmit = async (values: {
@@ -75,7 +79,7 @@ const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onLoginSuccess }) => 
   return (
     <Layout
       style={{
-        height: '100vh',
+        minHeight: '100vh',
         width: '100%',
         background: 'linear-gradient(135deg, #4f73ff, #79acff)',
       }}
@@ -84,8 +88,8 @@ const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onLoginSuccess }) => 
         style={{
           width: '100%',
           margin: 0,
-          padding: 0,
-          height: '100%',
+          padding: isMobile ? 12 : 24,
+          minHeight: '100vh',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -98,7 +102,7 @@ const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onLoginSuccess }) => 
             maxWidth: '1000px',
             width: '100%',
             height: 'auto',
-            minHeight: 600,
+            minHeight: isMobile ? 'auto' : 600,
             borderRadius: 12,
             boxShadow: '0 20px 60px rgba(0, 0, 0, 0.15)',
             overflow: 'hidden',
@@ -111,7 +115,7 @@ const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onLoginSuccess }) => 
             style={{
               background: 'linear-gradient(135deg, #4f73ff 0%, #5b7fee 100%)',
               color: '#fff',
-              padding: '60px 48px',
+              padding: isMobile ? '28px 20px' : '60px 48px',
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'flex-start',
@@ -150,7 +154,7 @@ const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onLoginSuccess }) => 
                 style={{
                   color: '#fff',
                   marginBottom: 24,
-                  fontSize: 42,
+                  fontSize: isMobile ? 34 : 42,
                   fontWeight: 700,
                   margin: 0,
                 }}
@@ -175,7 +179,7 @@ const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onLoginSuccess }) => 
             xs={24}
             md={12}
             style={{
-              padding: '60px 48px',
+              padding: isMobile ? '28px 20px' : '60px 48px',
               background: '#79acff',
               display: 'flex',
               alignItems: 'center',
@@ -194,7 +198,7 @@ const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onLoginSuccess }) => 
                   textAlign: 'center',
                   marginBottom: 8,
                   color: '#111827',
-                  fontSize: 28,
+                  fontSize: isMobile ? 24 : 28,
                 }}
               >
                 Welcome back
@@ -267,6 +271,8 @@ const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onLoginSuccess }) => 
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
+                    flexWrap: isMobile ? 'wrap' : 'nowrap',
+                    rowGap: 8,
                     marginBottom: 24,
                   }}
                 >

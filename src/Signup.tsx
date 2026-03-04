@@ -1,19 +1,20 @@
 import React, { useState } from 'react';
-import { Layout, Typography, Form, Input, Checkbox, Button, message } from 'antd';
+import { Layout, Typography, Form, Input, Checkbox, Button, Grid } from 'antd';
 import TermsModal from './components/TermsModal';
 import { CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
-
-const AUTH_TOKEN_KEY = 'dormease_token';
+const { useBreakpoint } = Grid;
 
 interface SignupProps {
   onNavigateToLogin?: () => void;
-  onSignupSuccess?: () => void;
+  onContinueToVerify?: (data: { fullName: string; username: string; email: string; password: string }) => void;
 }
 
-const Signup: React.FC<SignupProps> = ({ onNavigateToLogin, onSignupSuccess }) => {
+const Signup: React.FC<SignupProps> = ({ onNavigateToLogin, onContinueToVerify }) => {
+  const screens = useBreakpoint();
+  const isMobile = !screens.md;
   const [form] = Form.useForm();
   const [password, setPassword] = useState('');
   const [showPasswordRequirements, setShowPasswordRequirements] = useState(false);
@@ -37,37 +38,13 @@ const Signup: React.FC<SignupProps> = ({ onNavigateToLogin, onSignupSuccess }) =
     confirmPassword: string;
     agree: boolean;
   }) => {
-    try {
-      const response = await fetch('http://localhost:3000/auth/signup', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          fullName: values.fullName,
-          username: values.username,
-          email: values.email,
-          password: values.password,
-          platform: 'web',
-        }),
+    if (onContinueToVerify) {
+      onContinueToVerify({
+        fullName: values.fullName,
+        username: values.username,
+        email: values.email,
+        password: values.password,
       });
-
-      if (!response.ok) {
-        const errorBody = await response.json().catch(() => ({}));
-        throw new Error(errorBody.message || 'Signup failed');
-      }
-
-      const data = await response.json();
-      if (data.token) {
-        localStorage.setItem(AUTH_TOKEN_KEY, data.token);
-      }
-      message.success('Account created successfully.');
-      if (onSignupSuccess) {
-        onSignupSuccess();
-      }
-    } catch (error: any) {
-      console.error('Signup error', error);
-      message.error(error.message || 'Unable to create account. Please try again.');
     }
   };
 
@@ -80,7 +57,7 @@ const Signup: React.FC<SignupProps> = ({ onNavigateToLogin, onSignupSuccess }) =
   return (
     <Layout
       style={{
-        height: '100vh',
+        minHeight: '100vh',
         width: '100%',
         background: 'linear-gradient(135deg, #4f73ff, #79acff)',
       }}
@@ -89,8 +66,8 @@ const Signup: React.FC<SignupProps> = ({ onNavigateToLogin, onSignupSuccess }) =
         style={{
           width: '100%',
           margin: 0,
-          padding: 0,
-          height: '100%',
+          padding: isMobile ? 12 : 20,
+          minHeight: '100vh',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -99,11 +76,11 @@ const Signup: React.FC<SignupProps> = ({ onNavigateToLogin, onSignupSuccess }) =
       >
         <div
           style={{
-            width: '90%',
+            width: '100%',
             maxWidth: 500,
             background: '#79acff',
             borderRadius: 16,
-            padding: '24px 28px',
+            padding: isMobile ? '20px 16px' : '24px 28px',
             boxShadow: '0 8px 32px rgba(15, 23, 42, 0.15)',
             display: 'flex',
             flexDirection: 'column',
@@ -320,7 +297,7 @@ const Signup: React.FC<SignupProps> = ({ onNavigateToLogin, onSignupSuccess }) =
                 }}
                 disabled={!agreeChecked || !allRequirementsMet}
               >
-                Create Account
+                Verify Email
               </Button>
             </Form.Item>
 

@@ -17,21 +17,23 @@ import {
   Spin,
   Badge,
   Tag,
+  Grid,
 } from 'antd';
 import {
   UserOutlined,
   SafetyOutlined,
   EditOutlined,
   MailOutlined,
-  PhoneOutlined,
   LogoutOutlined,
-  LockOutlined,
   CheckCircleOutlined,
 } from '@ant-design/icons';
 
 const { Title, Text } = Typography;
+const { useBreakpoint } = Grid;
 
 const Profile: React.FC = () => {
+  const screens = useBreakpoint();
+  const isMobile = !screens.md;
   const [user, setUser] = useState<{ id?: number; username?: string; email?: string; fullName?: string; platform?: string } | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -45,6 +47,19 @@ const Profile: React.FC = () => {
   const [form] = Form.useForm();
   const [passForm] = Form.useForm();
   const [emailForm] = Form.useForm();
+  
+  // OTP verification states
+  const [showPasswordOtpModal, setShowPasswordOtpModal] = useState(false);
+  const [showEmailOtpModal, setShowEmailOtpModal] = useState(false);
+  const [otpModalForm] = Form.useForm();
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpVerified, setOtpVerified] = useState(false);
+  const [sendingOtp, setSendingOtp] = useState(false);
+  const [verifyingOtp, setVerifyingOtp] = useState(false);
+  const [countdown, setCountdown] = useState(0);
+  const [currentOtpAction, setCurrentOtpAction] = useState<'password' | 'email'>('password');
+  const [passwordOtpVerified, setPasswordOtpVerified] = useState(false);
+  const [emailOtpVerified, setEmailOtpVerified] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem('dormease_token');
@@ -67,6 +82,28 @@ const Profile: React.FC = () => {
       });
   }, []);
 
+  useEffect(() => {
+    if (countdown > 0) {
+      const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [countdown]);
+
+  // Clear forms when opening security section
+  useEffect(() => {
+    if (section === 'security') {
+      passForm.resetFields();
+      emailForm.resetFields();
+      // Delay to ensure React has rendered the inputs
+      setTimeout(() => {
+        const emailInputs = document.querySelectorAll('input[type="email"], input[name="email"]');
+        const passwordInputs = document.querySelectorAll('input[type="password"], input[name="password"]');
+        emailInputs.forEach((input: any) => { input.value = ''; });
+        passwordInputs.forEach((input: any) => { input.value = ''; });
+      }, 100);
+    }
+  }, [section, passForm, emailForm]);
+
   const handleLogout = async () => {
     const token = localStorage.getItem('dormease_token');
     try {
@@ -80,6 +117,98 @@ const Profile: React.FC = () => {
     window.location.href = '/';
   };
 
+  const handleRequestOtp = async () => {
+    try {
+      setSendingOtp(true);
+      const token = localStorage.getItem('dormease_token');
+      const response = await fetch('http://localhost:3000/auth/request-change-otp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || 'Failed to send OTP');
+      }
+
+      setOtpSent(true);
+      setCountdown(60);
+      message.success('OTP sent to your email!');
+    } catch (error: any) {
+      message.error(error.message || 'Failed to send OTP');
+    } finally {
+      setSendingOtp(false);
+    }
+  };
+
+  const handleVerifyOtp = async (values: { otp: string }) => {
+    try {
+      setVerifyingOtp(true);
+      const token = localStorage.getItem('dormease_token');
+      const response = await fetch('http://localhost:3000/auth/verify-change-otp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ otp: values.otp }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || 'Invalid OTP');
+      }
+
+      setOtpVerified(true);
+      if (currentOtpAction === 'password') {
+        setPasswordOtpVerified(true);
+      } else {
+        setEmailOtpVerified(true);
+      }
+      message.success('OTP verified! You can now change your ' + (currentOtpAction === 'password' ? 'password' : 'email'));
+    } catch (error: any) {
+      message.error(error.message || 'OTP verification failed');
+    } finally {
+      setVerifyingOtp(false);
+    }
+  };
+
+  const handleCloseOtpModal = () => {
+    setShowPasswordOtpModal(false);
+    setShowEmailOtpModal(false);
+    setOtpSent(false);
+    setOtpVerified(false);
+    otpModalForm.resetFields();
+    setCountdown(0);
+  };
+
+  const handlePasswordChangeClick = async () => {
+    try {
+      // Validate form first
+      await passForm.validateFields();
+      setCurrentOtpAction('password');
+      setPasswordOtpVerified(false);
+      setShowPasswordOtpModal(true);
+    } catch (error) {
+      // Validation failed, errors are shown by antd
+    }
+  };
+
+  const handleEmailChangeClick = async () => {
+    try {
+      // Validate form first
+      await emailForm.validateFields();
+      setCurrentOtpAction('email');
+      setEmailOtpVerified(false);
+      setShowEmailOtpModal(true);
+    } catch (error) {
+      // Validation failed, errors are shown by antd
+    }
+  };
+
   const avatarLetter = user?.fullName?.charAt(0).toUpperCase() || user?.username?.charAt(0)?.toUpperCase() || 'U';
 
   if (loading) {
@@ -91,8 +220,8 @@ const Profile: React.FC = () => {
   }
 
   return (
-    <div style={{ padding: 24, height: '100%', display: 'flex', flexDirection: 'column', background: '#f5f7fa' }}>
-      <div style={{ maxWidth: 1200, margin: '0 auto', flex: 1, overflowY: 'auto', width: '100%' }}>
+    <div style={{ padding: isMobile ? 12 : 24, height: '100%', display: 'flex', flexDirection: 'column', background: '#f5f7fa', overflowX: 'hidden' }}>
+      <div style={{ maxWidth: 1200, margin: '0 auto', flex: 1, overflowY: 'auto', overflowX: 'hidden', width: '100%' }}>
         <Title level={2} style={{ marginBottom: 24 }}>Account Settings</Title>
         
         <Row gutter={24}>
@@ -239,7 +368,11 @@ const Profile: React.FC = () => {
               <Row gutter={16}>
                 <Col xs={24} md={12}>
                   <Card type="inner" title="Change password">
-                    <Form form={passForm} layout="vertical" onFinish={async (vals) => {
+                    <Form form={passForm} layout="vertical" autoComplete="off" onFinish={async (vals) => {
+                      if (!passwordOtpVerified) {
+                        message.error('Please verify OTP before changing password');
+                        return;
+                      }
                       const { currentPassword, newPassword, confirm } = vals;
                       if (!user) return message.error('No user');
                       if (!currentPassword || !newPassword) return message.error('Please fill fields');
@@ -263,28 +396,52 @@ const Profile: React.FC = () => {
                         }
                         message.success('Password updated');
                         passForm.resetFields();
+                        setPasswordOtpVerified(false);
+                        handleCloseOtpModal();
                       } catch (e: any) {
                         message.error(e.message || 'Failed to change password');
                       }
                     }}>
                       <Form.Item name="currentPassword" label="Current password" rules={[{ required: true }]}>
-                        <Input.Password />
+                        <Input.Password 
+                          autoComplete="off" 
+                          data-lpignore="true" 
+                          data-1p-ignore="true"
+                          onFocus={(e) => { e.target.value = ''; }}
+                        />
                       </Form.Item>
                       <Form.Item name="newPassword" label="New password" rules={[{ required: true, min: 6 }]}>
-                        <Input.Password />
+                        <Input.Password 
+                          autoComplete="off" 
+                          data-lpignore="true" 
+                          data-1p-ignore="true"
+                        />
                       </Form.Item>
                       <Form.Item name="confirm" label="Confirm new password" dependencies={["newPassword"]} rules={[{ required: true, message: 'Please confirm' }, ({ getFieldValue }) => ({ validator(_, value) { if (!value || getFieldValue('newPassword') === value) return Promise.resolve(); return Promise.reject(new Error('Passwords do not match')); } })]}>
-                        <Input.Password />
+                        <Input.Password 
+                          autoComplete="off" 
+                          data-lpignore="true" 
+                          data-1p-ignore="true"
+                        />
                       </Form.Item>
                       <Form.Item>
-                        <Button type="primary" onClick={() => passForm.submit()}>Change password</Button>
+                        <Button 
+                          type="primary" 
+                          onClick={handlePasswordChangeClick}
+                        >
+                          Change password
+                        </Button>
                       </Form.Item>
                     </Form>
                   </Card>
                 </Col>
                 <Col xs={24} md={12}>
                   <Card type="inner" title="Change email">
-                    <Form form={emailForm} layout="vertical" onFinish={async (vals) => {
+                    <Form form={emailForm} layout="vertical" autoComplete="off" onFinish={async (vals) => {
+                      if (!emailOtpVerified) {
+                        message.error('Please verify OTP before changing email');
+                        return;
+                      }
                       const { email, password } = vals;
                       if (!user) return message.error('No user');
                       if (!email || !password) return message.error('Please fill fields');
@@ -309,18 +466,37 @@ const Profile: React.FC = () => {
                         setUser(data.user || null);
                         message.success('Email updated');
                         emailForm.resetFields();
+                        setEmailOtpVerified(false);
+                        handleCloseOtpModal();
                       } catch (e: any) {
                         message.error(e.message || 'Failed to update email');
                       }
                     }}>
                       <Form.Item name="email" label="New email" rules={[{ required: true, type: 'email' }]}>
-                        <Input />
+                        <Input 
+                          type="email" 
+                          autoComplete="off" 
+                          data-lpignore="true" 
+                          data-1p-ignore="true"
+                          spellCheck="false" 
+                          onFocus={(e) => { e.currentTarget.value = ''; }}
+                        />
                       </Form.Item>
                       <Form.Item name="password" label="Current password" rules={[{ required: true }]}>
-                        <Input.Password />
+                        <Input.Password 
+                          autoComplete="off" 
+                          data-lpignore="true" 
+                          data-1p-ignore="true"
+                          onFocus={(e) => { e.target.value = ''; }}
+                        />
                       </Form.Item>
                       <Form.Item>
-                        <Button type="primary" onClick={() => emailForm.submit()}>Change email</Button>
+                        <Button 
+                          type="primary" 
+                          onClick={handleEmailChangeClick}
+                        >
+                          Change email
+                        </Button>
                       </Form.Item>
                     </Form>
                   </Card>
@@ -330,6 +506,102 @@ const Profile: React.FC = () => {
             )}
           </Col>
         </Row>
+
+        {/* OTP Verification Modal */}
+        <Modal 
+          title={`Verify via OTP - ${currentOtpAction === 'password' ? 'Change Password' : 'Change Email'}`}
+          open={showPasswordOtpModal || showEmailOtpModal}
+          onCancel={handleCloseOtpModal}
+          width={isMobile ? '95vw' : 450}
+          footer={null}
+        >
+          {!otpVerified ? (
+            <Form form={otpModalForm} layout="vertical" onFinish={handleVerifyOtp}>
+              {!otpSent ? (
+                <>
+                  <Text style={{ display: 'block', marginBottom: 16 }}>
+                    We'll send a verification code to your email address.
+                  </Text>
+                  <Button 
+                    type="primary" 
+                    block 
+                    size="large"
+                    loading={sendingOtp}
+                    onClick={handleRequestOtp}
+                  >
+                    Request OTP
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Text style={{ display: 'block', marginBottom: 16 }}>
+                    Enter the 6-digit code sent to your email.
+                  </Text>
+                  <Form.Item 
+                    name="otp" 
+                    label="Enter OTP" 
+                    rules={[{ required: true, message: 'Please enter OTP' }]}
+                  >
+                    <Input 
+                      placeholder="000000" 
+                      maxLength={6}
+                      style={{ fontSize: 24, letterSpacing: 4, textAlign: 'center' }}
+                    />
+                  </Form.Item>
+                  <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                    <Button block onClick={handleCloseOtpModal}>
+                      Cancel
+                    </Button>
+                    <Button 
+                      type="primary" 
+                      block
+                      loading={verifyingOtp}
+                      onClick={() => otpModalForm.submit()}
+                    >
+                      Verify OTP
+                    </Button>
+                  </Space>
+                  <div style={{ textAlign: 'center', marginTop: 12 }}>
+                    {countdown > 0 ? (
+                      <Text type="secondary">Resend code in {countdown}s</Text>
+                    ) : (
+                      <Button 
+                        type="link" 
+                        onClick={handleRequestOtp}
+                        loading={sendingOtp}
+                      >
+                        Resend OTP
+                      </Button>
+                    )}
+                  </div>
+                </>
+              )}
+            </Form>
+          ) : (
+            <div style={{ textAlign: 'center', paddingTop: 16 }}>
+              <Text strong style={{ fontSize: 16, display: 'block', marginBottom: 16 }}>
+                ✓ OTP Verified Successfully!
+              </Text>
+              <Text type="secondary" style={{ display: 'block', marginBottom: 24 }}>
+                You can now {currentOtpAction === 'password' ? 'change your password' : 'change your email'} below.
+              </Text>
+              <Button 
+                type="primary" 
+                block 
+                size="large"
+                onClick={() => {
+                  if (currentOtpAction === 'password') {
+                    passForm.submit();
+                  } else {
+                    emailForm.submit();
+                  }
+                }}
+              >
+                Proceed with {currentOtpAction === 'password' ? 'Password' : 'Email'} Change
+              </Button>
+            </div>
+          )}
+        </Modal>
 
         {/** Edit modal for personal information */}
           <Modal title="Edit Profile" open={editing} onCancel={() => setEditing(false)} onOk={() => form.submit()} okText="Save">

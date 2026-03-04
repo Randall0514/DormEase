@@ -12,6 +12,7 @@ import {
   message,
   Badge,
   Tag,
+  Grid,
 } from 'antd';
 import {
   InfoCircleOutlined,
@@ -26,8 +27,11 @@ import {
 } from '@ant-design/icons';
 
 const { Title, Text, Paragraph } = Typography;
+const { useBreakpoint } = Grid;
 
 const Settings: React.FC = () => {
+  const screens = useBreakpoint();
+  const isMobile = !screens.md;
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     const stored = localStorage.getItem('dormease_darkMode');
     if (stored !== null) return stored === 'true';
@@ -53,8 +57,8 @@ const Settings: React.FC = () => {
   };
 
   return (
-    <div style={{ padding: 24, height: '100%', display: 'flex', flexDirection: 'column', background: darkMode ? '#000000' : '#f5f7fa', transition: 'background 0.3s ease' }}>
-      <div style={{ maxWidth: 1000, margin: '0 auto', flex: 1, overflowY: 'auto', width: '100%' }}>
+    <div style={{ padding: isMobile ? 12 : 24, height: '100%', display: 'flex', flexDirection: 'column', background: darkMode ? '#000000' : '#f5f7fa', transition: 'background 0.3s ease', overflowX: 'hidden' }}>
+      <div style={{ maxWidth: 1000, margin: '0 auto', flex: 1, overflowY: 'auto', overflowX: 'hidden', width: '100%' }}>
         <Title level={2} style={{ marginBottom: 8, color: darkMode ? '#fff' : '#000' }}>Settings</Title>
         <Text type="secondary" style={{ display: 'block', marginBottom: 24 }}>
           Manage your application preferences

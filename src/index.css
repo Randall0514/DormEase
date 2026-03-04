@@ -23,6 +23,30 @@ body {
     width: 100%;
 }
 
+@media (max-width: 1024px) {
+    html,
+    body,
+    #root {
+        width: 100%;
+        max-width: 100%;
+        overflow-x: hidden;
+    }
+    * {
+        box-sizing: border-box;
+    }
+    .ant-layout,
+    .ant-layout-content,
+    .ant-card,
+    .ant-list,
+    .ant-list-item,
+    .ant-space {
+        max-width: 100%;
+    }
+    .ant-space {
+        flex-wrap: wrap;
+    }
+}
+
 
 /* Dark mode styles applied when <body> has .dark-mode */
 

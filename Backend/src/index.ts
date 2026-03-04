@@ -4,6 +4,7 @@ import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import cors from "cors";
 import multer from "multer";
+import nodemailer from "nodemailer";
 import path from "path";
 import fs from "fs";
 import { pool } from "./db";
@@ -17,6 +18,123 @@ if (!fs.existsSync(DORMS_PHOTOS_DIR)) {
 }
 
 const SESSION_MINUTES = Number(process.env.SESSION_MINUTES) || 60 * 24 * 7;
+const SIGNUP_OTP_TTL_MINUTES = Number(process.env.SIGNUP_OTP_TTL_MINUTES) || 10;
+const SIGNUP_OTP_RESEND_SECONDS = Number(process.env.SIGNUP_OTP_RESEND_SECONDS) || 60;
+const SIGNUP_OTP_MAX_ATTEMPTS = Number(process.env.SIGNUP_OTP_MAX_ATTEMPTS) || 5;
+const CHANGE_OTP_TTL_MINUTES = Number(process.env.CHANGE_OTP_TTL_MINUTES) || 10;
+const CHANGE_OTP_RESEND_SECONDS = Number(process.env.CHANGE_OTP_RESEND_SECONDS) || 60;
+const CHANGE_OTP_MAX_ATTEMPTS = Number(process.env.CHANGE_OTP_MAX_ATTEMPTS) || 5;
+
+type SignupOtpRecord = {
+  code: string;
+  expiresAt: number;
+  attempts: number;
+  lastSentAt: number;
+};
+
+type ChangeOtpRecord = {
+  userId: number;
+  code: string;
+  expiresAt: number;
+  attempts: number;
+  lastSentAt: number;
+};
+
+const signupOtpStore = new Map<string, SignupOtpRecord>();
+const changeOtpStore = new Map<number, ChangeOtpRecord>();
+let smtpTransporter: nodemailer.Transporter | null | undefined;
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+function generateSignupOtpCode(): string {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+function getSmtpTransporter(): nodemailer.Transporter | null {
+  if (smtpTransporter !== undefined) {
+    return smtpTransporter;
+  }
+
+  const host = process.env.SMTP_HOST;
+  const port = Number(process.env.SMTP_PORT || 587);
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  const secure = process.env.SMTP_SECURE === "true";
+
+  if (!host || !user || !pass) {
+    smtpTransporter = null;
+    return smtpTransporter;
+  }
+
+  smtpTransporter = nodemailer.createTransport({
+    host,
+    port,
+    secure,
+    auth: {
+      user,
+      pass,
+    },
+  });
+
+  return smtpTransporter;
+}
+
+function verifyAndConsumeSignupOtp(email: string, otp: string): { ok: boolean; message?: string } {
+  const normalizedEmail = normalizeEmail(email);
+  const record = signupOtpStore.get(normalizedEmail);
+
+  if (!record) {
+    return { ok: false, message: "OTP is missing or expired. Please request a new OTP." };
+  }
+
+  if (Date.now() > record.expiresAt) {
+    signupOtpStore.delete(normalizedEmail);
+    return { ok: false, message: "OTP has expired. Please request a new OTP." };
+  }
+
+  if (record.attempts >= SIGNUP_OTP_MAX_ATTEMPTS) {
+    signupOtpStore.delete(normalizedEmail);
+    return { ok: false, message: "Too many OTP attempts. Please request a new OTP." };
+  }
+
+  if (record.code !== String(otp || "").trim()) {
+    record.attempts += 1;
+    signupOtpStore.set(normalizedEmail, record);
+    return { ok: false, message: "Invalid OTP code." };
+  }
+
+  signupOtpStore.delete(normalizedEmail);
+  return { ok: true };
+}
+
+function verifyAndConsumeChangeOtp(userId: number, otp: string): { ok: boolean; message?: string } {
+  const record = changeOtpStore.get(userId);
+
+  if (!record) {
+    return { ok: false, message: "OTP is missing or expired. Please request a new OTP." };
+  }
+
+  if (Date.now() > record.expiresAt) {
+    changeOtpStore.delete(userId);
+    return { ok: false, message: "OTP has expired. Please request a new OTP." };
+  }
+
+  if (record.attempts >= CHANGE_OTP_MAX_ATTEMPTS) {
+    changeOtpStore.delete(userId);
+    return { ok: false, message: "Too many OTP attempts. Please request a new OTP." };
+  }
+
+  if (record.code !== String(otp || "").trim()) {
+    record.attempts += 1;
+    changeOtpStore.set(userId, record);
+    return { ok: false, message: "Invalid OTP code." };
+  }
+
+  changeOtpStore.delete(userId);
+  return { ok: true };
+}
 
 function createSessionToken(): string {
   return crypto.randomBytes(32).toString("hex");
@@ -96,27 +214,107 @@ app.get("/", (_req, res) => {
 // AUTH
 // ─────────────────────────────────────────────
 
+app.post("/auth/request-signup-otp", async (req, res) => {
+  const { email, username } = req.body as { email?: string; username?: string };
+  if (!email || !username) {
+    return res.status(400).json({ message: "Email and username are required" });
+  }
+
+  const normalizedEmail = normalizeEmail(email);
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(normalizedEmail)) {
+    return res.status(400).json({ message: "Invalid email address" });
+  }
+
+  const existingOtp = signupOtpStore.get(normalizedEmail);
+  if (existingOtp && Date.now() - existingOtp.lastSentAt < SIGNUP_OTP_RESEND_SECONDS * 1000) {
+    const secondsRemaining = Math.ceil(
+      (SIGNUP_OTP_RESEND_SECONDS * 1000 - (Date.now() - existingOtp.lastSentAt)) / 1000
+    );
+    return res.status(429).json({
+      message: `Please wait ${secondsRemaining}s before requesting another OTP`,
+    });
+  }
+
+  try {
+    const check = await pool.query(
+      "SELECT id FROM users WHERE username=$1 OR email=$2",
+      [username, normalizedEmail]
+    );
+    if (check.rows.length > 0) {
+      return res.status(400).json({ message: "Username or email already exists" });
+    }
+
+    const transporter = getSmtpTransporter();
+    if (!transporter) {
+      return res.status(500).json({ message: "SMTP is not configured on the server" });
+    }
+
+    const fromAddress = process.env.SMTP_FROM || process.env.SMTP_USER;
+    if (!fromAddress) {
+      return res.status(500).json({ message: "SMTP sender is not configured" });
+    }
+
+    const otpCode = generateSignupOtpCode();
+    signupOtpStore.set(normalizedEmail, {
+      code: otpCode,
+      expiresAt: Date.now() + SIGNUP_OTP_TTL_MINUTES * 60 * 1000,
+      attempts: 0,
+      lastSentAt: Date.now(),
+    });
+
+    await transporter.sendMail({
+      from: fromAddress,
+      to: normalizedEmail,
+      subject: "DormEase signup verification code",
+      text: `Your DormEase OTP is ${otpCode}. It expires in ${SIGNUP_OTP_TTL_MINUTES} minutes.`,
+      html: `<p>Your DormEase OTP is <b>${otpCode}</b>.</p><p>It expires in ${SIGNUP_OTP_TTL_MINUTES} minutes.</p>`,
+    });
+
+    res.json({ message: "OTP sent successfully" });
+  } catch (err: any) {
+    console.error("Request signup OTP error:", err);
+    console.error("SMTP Error details:", {
+      message: err.message,
+      code: err.code,
+      command: err.command,
+      response: err.response,
+      responseCode: err.responseCode,
+    });
+    signupOtpStore.delete(normalizedEmail);
+    const errorMsg = err.response || err.message || "Failed to send OTP";
+    res.status(500).json({ message: `Failed to send OTP: ${errorMsg}` });
+  }
+});
+
 app.post("/auth/signup", async (req, res) => {
-  const { fullName, username, email, password, platform } = req.body;
-  if (!fullName || !username || !email || !password || !platform) {
+  const { fullName, username, email, password, otp, platform } = req.body;
+  if (!fullName || !username || !email || !password || !otp || !platform) {
     return res.status(400).json({ message: "All fields are required" });
   }
   if (!["web", "mobile"].includes(platform)) {
     return res.status(400).json({ message: "Invalid platform" });
   }
   try {
+    const normalizedEmail = normalizeEmail(email);
     const check = await pool.query(
       "SELECT * FROM users WHERE username=$1 OR email=$2",
-      [username, email]
+      [username, normalizedEmail]
     );
     if (check.rows.length > 0) {
       return res.status(400).json({ message: "Username or email already exists" });
     }
+
+    const otpResult = verifyAndConsumeSignupOtp(normalizedEmail, String(otp));
+    if (!otpResult.ok) {
+      return res.status(400).json({ message: otpResult.message });
+    }
+
     const hashedPassword = await bcrypt.hash(password, 10);
     const result = await pool.query(
       `INSERT INTO users (full_name, username, email, password, platform)
        VALUES ($1, $2, $3, $4, $5) RETURNING id, username, email, platform, full_name`,
-      [fullName, username, email, hashedPassword, platform]
+      [fullName, username, normalizedEmail, hashedPassword, platform]
     );
     const user = result.rows[0];
     const token = await createSession(user.id);
@@ -232,6 +430,83 @@ app.patch("/auth/me", requireAuth, async (req, res) => {
     console.error("Update user error:", err);
     res.status(500).json({ message: "Database error" });
   }
+});
+
+// POST /auth/request-change-otp - Request OTP for password/email changes
+app.post("/auth/request-change-otp", requireAuth, async (req, res) => {
+  const userId = (req as express.Request & { userId: number }).userId;
+  try {
+    const user = await pool.query("SELECT email FROM users WHERE id = $1", [userId]);
+    if (user.rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    
+    const userEmail = user.rows[0].email;
+    const existing = changeOtpStore.get(userId);
+    
+    // Check if OTP was recently sent
+    if (existing && Date.now() - existing.lastSentAt < CHANGE_OTP_RESEND_SECONDS * 1000) {
+      return res.status(429).json({ message: `Please wait ${Math.ceil((CHANGE_OTP_RESEND_SECONDS * 1000 - (Date.now() - existing.lastSentAt)) / 1000)} seconds before requesting again` });
+    }
+    
+    // Generate new OTP
+    const otp = generateSignupOtpCode();
+    const expiresAt = Date.now() + CHANGE_OTP_TTL_MINUTES * 60 * 1000;
+    
+    changeOtpStore.set(userId, {
+      userId,
+      code: otp,
+      expiresAt,
+      attempts: 0,
+      lastSentAt: Date.now(),
+    });
+    
+    // Send OTP email
+    const transporter = getSmtpTransporter();
+    if (transporter) {
+      try {
+        await transporter.sendMail({
+          from: process.env.SMTP_FROM || 'noreply@dormease.com',
+          to: userEmail,
+          subject: 'DormEase Account Verification Code',
+          html: `
+            <div style="font-family: Arial, sans-serif; color: #333;">
+              <h2 style="color: #4f73ff;">DormEase Account Verification</h2>
+              <p>Your OTP for changing password or email is:</p>
+              <h1 style="color: #4f73ff; font-size: 32px; letter-spacing: 4px;">${otp}</h1>
+              <p style="color: #666;">This code expires in ${CHANGE_OTP_TTL_MINUTES} minutes.</p>
+              <p style="color: #999; font-size: 12px;">If you didn't request this, please ignore this email.</p>
+            </div>
+          `,
+        });
+      } catch (emailErr) {
+        console.error("Email send error:", emailErr);
+        return res.status(500).json({ message: "Failed to send OTP email" });
+      }
+    }
+    
+    res.json({ message: "OTP sent to your email", email: userEmail });
+  } catch (err) {
+    console.error("Request change OTP error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
+});
+
+// POST /auth/verify-change-otp - Verify OTP for password/email changes
+app.post("/auth/verify-change-otp", requireAuth, async (req, res) => {
+  const userId = (req as express.Request & { userId: number }).userId;
+  const { otp } = req.body as { otp?: string };
+  
+  if (!otp) {
+    return res.status(400).json({ message: "OTP is required" });
+  }
+  
+  const verification = verifyAndConsumeChangeOtp(userId, otp);
+  if (!verification.ok) {
+    return res.status(400).json({ message: verification.message || "Invalid OTP" });
+  }
+  
+  res.json({ message: "OTP verified successfully" });
 });
 
 app.post("/auth/logout", async (req, res) => {
@@ -452,8 +727,8 @@ app.get("/reservations", async (req, res) => {
     const result = await pool.query(
       `SELECT r.id, r.dorm_name, r.location, r.full_name, r.phone, r.move_in_date,
               r.duration_months, r.price_per_month, r.deposit, r.advance, r.total_amount,
-              r.notes, r.payment_method, r.status, r.rejection_reason,
-              r.tenant_action, r.cancel_reason, r.tenant_action_at,
+              r.notes, r.payment_method, r.status, r.rejection_reason, r.termination_reason,
+              r.tenant_action, r.cancel_reason, r.tenant_action_at, r.payments_paid,
               r.created_at, d.room_capacity, d.id as dorm_id
        FROM reservations r
        LEFT JOIN dorms d ON d.user_id = r.dorm_owner_id
@@ -483,7 +758,7 @@ app.get("/reservations/tenant", async (req, res) => {
     const result = await pool.query(
       `SELECT id, dorm_name, location, full_name, phone, move_in_date,
               duration_months, price_per_month, deposit, advance, total_amount,
-              notes, payment_method, status, rejection_reason, created_at
+              notes, payment_method, status, rejection_reason, termination_reason, created_at
        FROM reservations
        WHERE regexp_replace(phone, '[^0-9]', '', 'g') LIKE $1
        ORDER BY created_at DESC`,
@@ -596,17 +871,70 @@ app.patch("/reservations/:id/tenant-action", async (req, res) => {
   }
 });
 
-// PATCH /reservations/:id/archive
-app.patch("/reservations/:id/archive", async (req, res) => {
+// PATCH /reservations/:id/mark-payment-paid
+app.patch("/reservations/:id/mark-payment-paid", async (req, res) => {
   const userId = await getUserIdFromToken(req);
   if (userId === null) {
     return res.status(401).json({ message: "Unauthorized" });
   }
   try {
     const rid = Number(req.params.id);
+    const { paymentNumber } = req.body;
+    
+    if (!paymentNumber || paymentNumber < 1) {
+      return res.status(400).json({ message: "Invalid payment number" });
+    }
+    
+    // Get current payments_paid count
+    const current = await pool.query(
+      "SELECT payments_paid, duration_months FROM reservations WHERE id = $1 AND dorm_owner_id = $2",
+      [rid, userId]
+    );
+    
+    if (current.rows.length === 0) {
+      return res.status(404).json({ message: "Reservation not found or not authorized" });
+    }
+    
+    const currentPaid = current.rows[0].payments_paid || 0;
+    const totalPayments = current.rows[0].duration_months;
+    
+    // Only allow marking the next unpaid payment
+    if (paymentNumber !== currentPaid + 1) {
+      return res.status(400).json({ 
+        message: `Can only mark payment #${currentPaid + 1} as paid. Please pay in order.` 
+      });
+    }
+    
+    if (paymentNumber > totalPayments) {
+      return res.status(400).json({ message: "Payment number exceeds contract duration" });
+    }
+    
+    // Update payments_paid
     const result = await pool.query(
-      "UPDATE reservations SET status = $1 WHERE id = $2 AND dorm_owner_id = $3 RETURNING *",
-      ["archived", rid, userId]
+      "UPDATE reservations SET payments_paid = $1 WHERE id = $2 AND dorm_owner_id = $3 RETURNING *",
+      [paymentNumber, rid, userId]
+    );
+    
+    return res.json({ message: "Payment marked as paid", reservation: result.rows[0] });
+  } catch (err) {
+    console.error("Mark payment paid error:", err);
+    return res.status(500).json({ message: "Database error" });
+  }
+});
+
+// PATCH /reservations/:id/archive
+app.patch("/reservations/:id/archive", async (req, res) => {
+  const userId = await getUserIdFromToken(req);
+  if (userId === null) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+  const { termination_reason } = req.body as { termination_reason?: string };
+  
+  try {
+    const rid = Number(req.params.id);
+    const result = await pool.query(
+      "UPDATE reservations SET status = $1, termination_reason = $2 WHERE id = $3 AND dorm_owner_id = $4 RETURNING *",
+      ["archived", termination_reason || null, rid, userId]
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ message: "Reservation not found or not authorized" });
@@ -676,6 +1004,8 @@ async function ensureSchema(): Promise<void> {
     await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS tenant_action text;");
     await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS cancel_reason text;");
     await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS tenant_action_at timestamptz;");
+    // Termination reason column
+    await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS termination_reason text;");
     console.log('✅ Schema up to date');
   } catch (err) {
     console.error('Error ensuring schema:', err);
@@ -689,7 +1019,7 @@ async function ensureSchema(): Promise<void> {
 async function startServer() {
   await ensureSchema();
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running at http://192.168.68.102:${PORT}`);
+    console.log(`Server running at http://192.168.68.124:${PORT}`);
   });
 }
 
