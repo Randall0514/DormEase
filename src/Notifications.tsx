@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Grid,
   Card, List, Tag, Typography, Row, Col, Space,
@@ -8,13 +8,13 @@ import {
   CalendarOutlined, UserOutlined, ClockCircleOutlined,
   LeftOutlined, CheckCircleOutlined, CloseCircleOutlined
 } from '@ant-design/icons';
+import { useWebSocket } from './contexts/WebSocketContext';
 
 const { Title, Text } = Typography;
 const { useBreakpoint } = Grid;
 
 const API_BASE = 'http://localhost:3000';
 const AUTH_TOKEN_KEY = 'dormease_token';
-const POLL_INTERVAL_MS = 8_000;
 
 interface Reservation {
   id: number;
@@ -65,6 +65,7 @@ type Props = {
 const Notifications: React.FC<Props> = ({ onNavigate }) => {
   const screens = useBreakpoint();
   const isMobile = !screens.md;
+  const { onNotification, offNotification } = useWebSocket();
 
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -76,13 +77,13 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
 
   const token = localStorage.getItem(AUTH_TOKEN_KEY);
 
-  // KEY FIX: use a ref so the poll callback always reads the latest reservations
-  // without needing to be recreated (which would reset the interval).
   const prevReservationsRef = useRef<Reservation[]>([]);
   const hasLoadedOnce = useRef(false);
 
-  // ── Core fetch ────────────────────────────────────────────────────────────
-  const fetchReservations = async (silent = false) => {
+  // ── Core fetch ─────────────────────────────────────────────────────────────
+  // Wrapped in useCallback so it's stable and safe to use in the Socket.IO
+  // useEffect dependency array without causing infinite re-renders.
+  const fetchReservations = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/reservations`, {
@@ -92,13 +93,11 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
       const data: Reservation[] = await res.json();
       const filtered = data.filter(r => r.status !== 'archived');
 
-      // Compare against previous snapshot to find NEW tenant actions
       if (hasLoadedOnce.current) {
         const arrived: number[] = [];
         filtered.forEach(incoming => {
           if (!incoming.tenant_action) return;
           const previous = prevReservationsRef.current.find(p => p.id === incoming.id);
-          // New action = incoming has one but previous didn't
           if (!previous?.tenant_action) {
             arrived.push(incoming.id);
           }
@@ -113,7 +112,6 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
         }
       }
 
-      // Always update the ref snapshot and state
       prevReservationsRef.current = filtered;
       setReservations(filtered);
       hasLoadedOnce.current = true;
@@ -122,18 +120,39 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
     } finally {
       if (!silent) setLoading(false);
     }
-  };
+  }, [token]); // only re-creates if the token changes (e.g. re-login)
 
-  // Initial load
+  // ── Initial load ───────────────────────────────────────────────────────────
   useEffect(() => {
     fetchReservations(false);
-  }, []);
+  }, [fetchReservations]);
 
-  // Background poll — created once, uses ref for comparison so no stale closure
+  // ── Socket.IO real-time updates ────────────────────────────────────────────
+  // Fires fetchReservations(true) the instant the server pushes
+  // 'reservation_updated' or 'notification', so the list refreshes
+  // immediately without any polling delay.
   useEffect(() => {
-    const id = setInterval(() => fetchReservations(true), POLL_INTERVAL_MS);
-    return () => clearInterval(id);
-  }, []);
+    const handleReservationUpdate = (data: any) => {
+      console.log('🔔 Socket.IO push received:', data);
+      fetchReservations(true); // silent refresh — no loading spinner
+
+      // Show the server's message as an Ant Design notification banner
+      if (data.message) {
+        message.info({
+          content: `🔔 ${data.message}`,
+          duration: 5,
+        });
+      }
+    };
+
+    onNotification(handleReservationUpdate);
+
+    // Cleanup: unregister when component unmounts or token changes
+    return () => {
+      offNotification(handleReservationUpdate);
+    };
+  }, [fetchReservations, onNotification, offNotification]);
+  // ── End Socket.IO ──────────────────────────────────────────────────────────
 
   // ── Approve / Reject ───────────────────────────────────────────────────────
   const updateStatus = async (id: number, status: 'approved' | 'rejected') => {
@@ -252,7 +271,6 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
         throw new Error(errBody?.message || 'Failed to update');
       }
       setReservations(prev => prev.map(r => r.id === id ? { ...r, status } : r));
-      // Also update the ref
       prevReservationsRef.current = prevReservationsRef.current.map(r => r.id === id ? { ...r, status } : r);
       message.success(status === 'approved' ? 'Booking confirmed!' : 'Booking rejected.');
     } catch (err: any) {
@@ -293,9 +311,8 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
 
   const getFilteredReservations = () => {
     if (!searchQuery.trim()) return reservations;
-    
     const query = searchQuery.toLowerCase();
-    return reservations.filter(r => 
+    return reservations.filter(r =>
       r.full_name.toLowerCase().includes(query) ||
       r.dorm_name.toLowerCase().includes(query) ||
       r.location.toLowerCase().includes(query) ||
@@ -303,17 +320,15 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
     );
   };
 
-  // Calculate occupied beds for a specific dorm
   const getOccupiedBeds = (dorm_id?: number) => {
     if (!dorm_id) return 0;
-    return reservations.filter(r => 
-      r.dorm_id === dorm_id && 
-      r.status === 'approved' && 
+    return reservations.filter(r =>
+      r.dorm_id === dorm_id &&
+      r.status === 'approved' &&
       r.tenant_action === 'accepted'
     ).length;
   };
 
-  // Check if dorm is full
   const isDormFull = () => {
     if (reservations.length === 0) return false;
     const firstReservation = reservations[0];

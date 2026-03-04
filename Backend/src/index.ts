@@ -7,7 +7,9 @@ import multer from "multer";
 import nodemailer from "nodemailer";
 import path from "path";
 import fs from "fs";
+import http from "http";
 import { pool } from "./db";
+import { initializeWebSocket, notifyUser } from "./websocket";
 
 dotenv.config();
 
@@ -664,6 +666,62 @@ app.get("/users", async (_req, res) => {
   }
 });
 
+app.get("/messages/contacts", async (req, res) => {
+  const userId = await getUserIdFromToken(req);
+  if (userId === null) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    const result = await pool.query(
+      `WITH owner_side AS (
+          SELECT DISTINCT
+            u.id,
+            u.full_name,
+            u.username,
+            u.email,
+            'tenant'::text AS relation
+          FROM reservations r
+          JOIN users u
+            ON lower(trim(coalesce(u.full_name, ''))) = lower(trim(coalesce(r.full_name, '')))
+          WHERE r.dorm_owner_id = $1
+            AND r.status = 'approved'
+            AND r.tenant_action = 'accepted'
+        ),
+        tenant_side AS (
+          SELECT DISTINCT
+            owner.id,
+            owner.full_name,
+            owner.username,
+            owner.email,
+            'owner'::text AS relation
+          FROM users me
+          JOIN reservations r
+            ON lower(trim(coalesce(me.full_name, ''))) = lower(trim(coalesce(r.full_name, '')))
+          JOIN users owner
+            ON owner.id = r.dorm_owner_id
+          WHERE me.id = $1
+            AND r.status = 'approved'
+            AND r.tenant_action = 'accepted'
+        )
+        SELECT DISTINCT id, full_name, username, email, relation
+        FROM (
+          SELECT * FROM owner_side
+          UNION ALL
+          SELECT * FROM tenant_side
+        ) contacts
+        WHERE id <> $1
+        ORDER BY full_name ASC, username ASC`,
+      [userId]
+    );
+
+    return res.json(result.rows);
+  } catch (err) {
+    console.error("Get message contacts error:", err);
+    return res.status(500).json({ message: "Database error" });
+  }
+});
+
 // ─────────────────────────────────────────────
 // RESERVATIONS
 // ─────────────────────────────────────────────
@@ -801,6 +859,17 @@ app.patch("/reservations/:id/status", async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ message: "Reservation not found or not authorized" });
     }
+    
+    // Send WebSocket notification to owner
+    const io = req.app.get('io');
+    if (io) {
+      notifyUser(io, userId, 'reservation_updated', {
+        reservationId: rid,
+        status,
+        message: `Reservation ${status === 'approved' ? 'approved' : 'rejected'}`,
+      });
+    }
+    
     return res.json({ message: "Status updated", reservation: result.rows[0] });
   } catch (err) {
     console.error("Update status error:", err);
@@ -864,6 +933,17 @@ app.patch("/reservations/:id/tenant-action", async (req, res) => {
         rid,
       ]
     );
+    
+    // Send WebSocket notification to dorm owner
+    const io = req.app.get('io');
+    if (io && result.rows[0]?.dorm_owner_id) {
+      notifyUser(io, result.rows[0].dorm_owner_id, 'reservation_updated', {
+        reservationId: rid,
+        tenantAction: action,
+        message: `Tenant has ${action} the reservation`,
+      });
+    }
+    
     return res.json({ message: "Tenant action recorded", reservation: result.rows[0] });
   } catch (err) {
     console.error("Tenant action error:", err);
@@ -1018,8 +1098,23 @@ async function ensureSchema(): Promise<void> {
 
 async function startServer() {
   await ensureSchema();
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running at http://192.168.68.124:${PORT}`);
+  
+  // Create HTTP server
+  const httpServer = http.createServer(app);
+  
+  // Initialize WebSocket
+  const io = initializeWebSocket(httpServer);
+  
+  // Store io instance on the server for easy access in routes
+  // @ts-ignore
+  httpServer._socketio = io;
+  
+  // Store io globally for use in route handlers
+  app.set('io', io);
+  
+  httpServer.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server running at http://192.168.68.124:${PORT}`);
+    console.log(`🔌 WebSocket server is ready`);
   });
 }
 

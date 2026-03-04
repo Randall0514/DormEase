@@ -4,6 +4,7 @@ import Login from './Login';
 import Signup from './Signup';
 import VerifyOTP from './VerifyOTP';
 import Dashboard from './Dashboard';
+import { WebSocketProvider } from './contexts/WebSocketContext';
 
 const AUTH_TOKEN_KEY = 'dormease_token';
 const API_BASE = 'http://localhost:3000';
@@ -65,11 +66,13 @@ function App() {
 
   if (view === 'dashboard') {
     return (
-      <Dashboard
-        onLogout={handleLogout}
-        account={{ isNew: isNewAccount }}
-        onSetupComplete={() => setIsNewAccount(false)}
-      />
+      <WebSocketProvider>
+        <Dashboard
+          onLogout={handleLogout}
+          account={{ isNew: isNewAccount }}
+          onSetupComplete={() => setIsNewAccount(false)}
+        />
+      </WebSocketProvider>
     );
   }
 
