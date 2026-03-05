@@ -411,6 +411,151 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
     }
   };
 
+  const markPaymentAsPaid = async (tenant: Reservation, paymentNumber: number) => {
+    const confirmed = await new Promise<boolean>((resolve) => {
+      Modal.confirm({
+        title: 'Confirm payment',
+        width: isMobile ? 360 : 560,
+        content: (
+          <div>
+            <p>
+              Mark <strong>Payment #{paymentNumber}</strong> for <strong>{tenant.full_name}</strong> as paid?
+            </p>
+            <Text type="secondary">
+              This updates the upcoming payments list and should only be done once the payment is received.
+            </Text>
+          </div>
+        ),
+        okText: 'Yes, Mark as Paid',
+        cancelText: 'Cancel',
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem(AUTH_TOKEN_KEY);
+      const res = await fetch(`${API_BASE}/reservations/${tenant.id}/mark-payment-paid`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ paymentNumber }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || 'Failed to mark as paid');
+      }
+
+      message.success(`Payment #${paymentNumber} marked as paid!`);
+      fetchNotifications();
+    } catch (err: any) {
+      message.error(err.message || 'Failed to mark payment as paid');
+    }
+  };
+
+  const extendTenantDuration = async (tenant: Reservation) => {
+    let monthsToAdd = '';
+    const numMonths = await new Promise<number | null>((resolve) => {
+      Modal.confirm({
+        title: 'Extend Contract Duration',
+        width: isMobile ? 360 : 560,
+        content: (
+          <div>
+            <p>
+              Extend contract for <strong>{tenant.full_name}</strong>
+            </p>
+            <p style={{ marginTop: 16, marginBottom: 8 }}>
+              <Text type="secondary">Current duration: {tenant.duration_months} month(s)</Text>
+            </p>
+            <Input
+              placeholder="Number of months to add"
+              type="number"
+              min="1"
+              max="60"
+              onChange={(e) => {
+                monthsToAdd = e.target.value;
+              }}
+              autoFocus
+            />
+          </div>
+        ),
+        okText: 'Extend',
+        cancelText: 'Cancel',
+        onOk: () => {
+          const num = parseInt(monthsToAdd, 10);
+          if (isNaN(num) || num <= 0) {
+            message.error('Please enter a valid number of months');
+            resolve(null);
+            return;
+          }
+          resolve(num);
+        },
+        onCancel: () => resolve(null),
+      });
+    });
+
+    if (numMonths === null) {
+      return;
+    }
+
+    const confirmed = await new Promise<boolean>((resolve) => {
+      Modal.confirm({
+        title: 'Confirm Extension',
+        width: isMobile ? 360 : 560,
+        content: (
+          <div>
+            <p>
+              Extend <strong>{tenant.full_name}</strong>'s contract by <strong>{numMonths} month(s)</strong>?
+            </p>
+            <div style={{ background: '#f3fbff', padding: 12, borderRadius: 6, marginTop: 12 }}>
+              <Text type="secondary">Current: {tenant.duration_months} months</Text><br />
+              <Text strong style={{ fontSize: 14, marginTop: 4, display: 'block' }}>
+                New: {tenant.duration_months + numMonths} months
+              </Text>
+            </div>
+          </div>
+        ),
+        okText: 'Yes, Extend',
+        cancelText: 'Cancel',
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem(AUTH_TOKEN_KEY);
+      const res = await fetch(`${API_BASE}/reservations/${tenant.id}/extend-duration`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ additional_months: numMonths }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || 'Failed to extend contract');
+      }
+
+      message.success(`Contract extended by ${numMonths} month(s)!`);
+      fetchNotifications();
+    } catch (err: any) {
+      message.error(err.message || 'Failed to extend contract');
+    }
+  };
+
   const updateStatus = async (id: number, status: 'approved' | 'rejected') => {
     setUpdatingId(id);
     const token = localStorage.getItem(AUTH_TOKEN_KEY);
@@ -888,15 +1033,24 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
                                 ₱{Number(tenant.price_per_month).toLocaleString()}
                               </Text>
                               <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>per month</Text>
-                              <Button
-                                danger
-                                size="small"
-                                style={{ display: 'block', marginLeft: 'auto' }}
-                                loading={terminatingTenantId === tenant.id}
-                                onClick={() => terminateTenant(tenant.id, tenant.full_name)}
-                              >
-                                Terminate Tenant
-                              </Button>
+                              <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                                <Button
+                                  size="small"
+                                  style={{ width: '100%' }}
+                                  onClick={() => extendTenantDuration(tenant)}
+                                >
+                                  Add Months
+                                </Button>
+                                <Button
+                                  danger
+                                  size="small"
+                                  style={{ width: '100%' }}
+                                  loading={terminatingTenantId === tenant.id}
+                                  onClick={() => terminateTenant(tenant.id, tenant.full_name)}
+                                >
+                                  Terminate Tenant
+                                </Button>
+                              </Space>
                             </div>
                           </Col>
                         </Row>
@@ -973,27 +1127,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
                                                 type="primary" 
                                                 size="small"
                                                 style={{ background: '#52c41a', borderColor: '#52c41a' }}
-                                                onClick={async () => {
-                                                  try {
-                                                    const token = localStorage.getItem(AUTH_TOKEN_KEY);
-                                                    const res = await fetch(`${API_BASE}/reservations/${tenant.id}/mark-payment-paid`, {
-                                                      method: 'PATCH',
-                                                      headers: {
-                                                        'Content-Type': 'application/json',
-                                                        Authorization: `Bearer ${token}`,
-                                                      },
-                                                      body: JSON.stringify({ paymentNumber: payment.monthNumber }),
-                                                    });
-                                                    if (!res.ok) {
-                                                      const err = await res.json();
-                                                      throw new Error(err.message || 'Failed to mark as paid');
-                                                    }
-                                                    message.success(`Payment #${payment.monthNumber} marked as paid!`);
-                                                    fetchNotifications();
-                                                  } catch (err: any) {
-                                                    message.error(err.message || 'Failed to mark payment as paid');
-                                                  }
-                                                }}
+                                                onClick={() => markPaymentAsPaid(tenant, payment.monthNumber)}
                                               >
                                                 Mark as Paid
                                               </Button>

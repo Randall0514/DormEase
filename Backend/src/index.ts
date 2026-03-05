@@ -164,6 +164,60 @@ async function getUserIdFromToken(req: express.Request): Promise<number | null> 
   return result.rows.length > 0 ? result.rows[0].user_id : null;
 }
 
+async function canUsersMessageEachOther(senderId: number, recipientId: number): Promise<boolean> {
+  if (!senderId || !recipientId || senderId === recipientId) {
+    return false;
+  }
+
+  const result = await pool.query(
+    `SELECT 1
+     FROM users sender_user
+     JOIN users recipient_user ON recipient_user.id = $2
+     JOIN reservations r
+       ON r.status = 'approved'
+       AND r.tenant_action = 'accepted'
+     WHERE sender_user.id = $1
+       AND (
+         (
+           r.dorm_owner_id = $1
+           AND lower(trim(coalesce(recipient_user.full_name, ''))) = lower(trim(coalesce(r.full_name, '')))
+         )
+         OR
+         (
+           r.dorm_owner_id = $2
+           AND lower(trim(coalesce(sender_user.full_name, ''))) = lower(trim(coalesce(r.full_name, '')))
+         )
+       )
+     LIMIT 1`,
+    [senderId, recipientId]
+  );
+
+  return result.rows.length > 0;
+}
+
+async function canAccessConversation(currentUserId: number, otherUserId: number): Promise<boolean> {
+  if (!currentUserId || !otherUserId || currentUserId === otherUserId) {
+    return false;
+  }
+
+  const currentlyAllowed = await canUsersMessageEachOther(currentUserId, otherUserId);
+  if (currentlyAllowed) {
+    return true;
+  }
+
+  // Allow access to existing conversations even if reservation status later changes.
+  const existing = await pool.query(
+    `SELECT 1
+     FROM messages
+     WHERE (sender_id = $1 AND recipient_id = $2)
+        OR (sender_id = $2 AND recipient_id = $1)
+     LIMIT 1`,
+    [currentUserId, otherUserId]
+  );
+
+  return existing.rows.length > 0;
+}
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -680,7 +734,8 @@ app.get("/messages/contacts", async (req, res) => {
             u.full_name,
             u.username,
             u.email,
-            'tenant'::text AS relation
+            'tenant'::text AS relation,
+            1 AS relation_rank
           FROM reservations r
           JOIN users u
             ON lower(trim(coalesce(u.full_name, ''))) = lower(trim(coalesce(r.full_name, '')))
@@ -694,7 +749,8 @@ app.get("/messages/contacts", async (req, res) => {
             owner.full_name,
             owner.username,
             owner.email,
-            'owner'::text AS relation
+            'owner'::text AS relation,
+            1 AS relation_rank
           FROM users me
           JOIN reservations r
             ON lower(trim(coalesce(me.full_name, ''))) = lower(trim(coalesce(r.full_name, '')))
@@ -703,21 +759,261 @@ app.get("/messages/contacts", async (req, res) => {
           WHERE me.id = $1
             AND r.status = 'approved'
             AND r.tenant_action = 'accepted'
-        )
-        SELECT DISTINCT id, full_name, username, email, relation
-        FROM (
+        ),
+        message_side AS (
+          SELECT DISTINCT
+            u.id,
+            u.full_name,
+            u.username,
+            u.email,
+            NULL::text AS relation,
+            2 AS relation_rank
+          FROM messages m
+          JOIN users u
+            ON u.id = CASE
+              WHEN m.sender_id = $1 THEN m.recipient_id
+              ELSE m.sender_id
+            END
+          WHERE (
+            m.sender_id = $1
+            AND m.sender_deleted_at IS NULL
+          )
+          OR (
+            m.recipient_id = $1
+            AND m.recipient_deleted_at IS NULL
+          )
+        ),
+        combined AS (
           SELECT * FROM owner_side
           UNION ALL
           SELECT * FROM tenant_side
-        ) contacts
-        WHERE id <> $1
-        ORDER BY full_name ASC, username ASC`,
+          UNION ALL
+          SELECT * FROM message_side
+        ),
+        dedup AS (
+          SELECT DISTINCT ON (id)
+            id,
+            full_name,
+            username,
+            email,
+            relation
+          FROM combined
+          WHERE id <> $1
+          ORDER BY id, relation_rank ASC, full_name ASC, username ASC
+        )
+        SELECT *
+        FROM dedup
+        ORDER BY full_name ASC NULLS LAST, username ASC NULLS LAST`,
       [userId]
     );
 
     return res.json(result.rows);
   } catch (err) {
     console.error("Get message contacts error:", err);
+    return res.status(500).json({ message: "Database error" });
+  }
+});
+
+app.get("/messages/conversations", async (req, res) => {
+  const userId = await getUserIdFromToken(req);
+  if (userId === null) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    const result = await pool.query(
+      `WITH owner_side AS (
+          SELECT DISTINCT
+            u.id,
+            u.full_name,
+            u.username,
+            u.email,
+            'tenant'::text AS relation,
+            1 AS relation_rank
+          FROM reservations r
+          JOIN users u
+            ON lower(trim(coalesce(u.full_name, ''))) = lower(trim(coalesce(r.full_name, '')))
+          WHERE r.dorm_owner_id = $1
+            AND r.status = 'approved'
+            AND r.tenant_action = 'accepted'
+        ),
+        tenant_side AS (
+          SELECT DISTINCT
+            owner.id,
+            owner.full_name,
+            owner.username,
+            owner.email,
+            'owner'::text AS relation,
+            1 AS relation_rank
+          FROM users me
+          JOIN reservations r
+            ON lower(trim(coalesce(me.full_name, ''))) = lower(trim(coalesce(r.full_name, '')))
+          JOIN users owner
+            ON owner.id = r.dorm_owner_id
+          WHERE me.id = $1
+            AND r.status = 'approved'
+            AND r.tenant_action = 'accepted'
+        ),
+        message_side AS (
+          SELECT DISTINCT
+            u.id,
+            u.full_name,
+            u.username,
+            u.email,
+            NULL::text AS relation,
+            2 AS relation_rank
+          FROM messages m
+          JOIN users u
+            ON u.id = CASE
+              WHEN m.sender_id = $1 THEN m.recipient_id
+              ELSE m.sender_id
+            END
+          WHERE (
+            m.sender_id = $1
+            AND m.sender_deleted_at IS NULL
+          )
+          OR (
+            m.recipient_id = $1
+            AND m.recipient_deleted_at IS NULL
+          )
+        ),
+        combined AS (
+          SELECT * FROM owner_side
+          UNION ALL
+          SELECT * FROM tenant_side
+          UNION ALL
+          SELECT * FROM message_side
+        ),
+        contacts AS (
+          SELECT DISTINCT ON (id)
+            id,
+            full_name,
+            username,
+            email,
+            relation
+          FROM combined
+          WHERE id <> $1
+          ORDER BY id, relation_rank ASC, full_name ASC, username ASC
+        )
+        SELECT
+          c.id,
+          c.full_name,
+          c.username,
+          c.email,
+          c.relation,
+          latest.message AS last_message,
+          latest.created_at AS last_message_at,
+          latest.sender_id AS last_sender_id
+        FROM contacts c
+        LEFT JOIN LATERAL (
+          SELECT m.message, m.created_at, m.sender_id
+          FROM messages m
+          WHERE (
+            m.sender_id = $1
+            AND m.recipient_id = c.id
+            AND m.sender_deleted_at IS NULL
+          )
+          OR (
+            m.recipient_id = $1
+            AND m.sender_id = c.id
+            AND m.recipient_deleted_at IS NULL
+          )
+          ORDER BY m.created_at DESC, m.id DESC
+          LIMIT 1
+        ) latest ON TRUE
+        ORDER BY COALESCE(latest.created_at, to_timestamp(0)) DESC, c.full_name ASC NULLS LAST, c.username ASC NULLS LAST`,
+      [userId]
+    );
+
+    return res.json(result.rows);
+  } catch (err) {
+    console.error("Get conversations error:", err);
+    return res.status(500).json({ message: "Database error" });
+  }
+});
+
+app.get("/messages/:contactId/history", async (req, res) => {
+  const userId = await getUserIdFromToken(req);
+  if (userId === null) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  const contactId = Number(req.params.contactId);
+  if (!contactId || contactId <= 0 || contactId === userId) {
+    return res.status(400).json({ message: "Invalid contact id" });
+  }
+
+  try {
+    const allowed = await canAccessConversation(userId, contactId);
+    if (!allowed) {
+      return res.status(403).json({ message: "Not allowed to access this conversation" });
+    }
+
+    const result = await pool.query(
+      `SELECT id, sender_id, recipient_id, message, created_at
+       FROM messages
+       WHERE (
+         sender_id = $1
+         AND recipient_id = $2
+         AND sender_deleted_at IS NULL
+       )
+       OR (
+         sender_id = $2
+         AND recipient_id = $1
+         AND recipient_deleted_at IS NULL
+       )
+       ORDER BY created_at ASC, id ASC`,
+      [userId, contactId]
+    );
+
+    return res.json(result.rows);
+  } catch (err) {
+    console.error("Get conversation history error:", err);
+    return res.status(500).json({ message: "Database error" });
+  }
+});
+
+app.delete("/messages/:contactId", async (req, res) => {
+  const userId = await getUserIdFromToken(req);
+  if (userId === null) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  const contactId = Number(req.params.contactId);
+  if (!contactId || contactId <= 0 || contactId === userId) {
+    return res.status(400).json({ message: "Invalid contact id" });
+  }
+
+  try {
+    const allowed = await canAccessConversation(userId, contactId);
+    if (!allowed) {
+      return res.status(403).json({ message: "Not allowed to delete this conversation" });
+    }
+
+    const deletedAsSender = await pool.query(
+      `UPDATE messages
+       SET sender_deleted_at = NOW()
+       WHERE sender_id = $1
+         AND recipient_id = $2
+         AND sender_deleted_at IS NULL`,
+      [userId, contactId]
+    );
+
+    const deletedAsRecipient = await pool.query(
+      `UPDATE messages
+       SET recipient_deleted_at = NOW()
+       WHERE sender_id = $2
+         AND recipient_id = $1
+         AND recipient_deleted_at IS NULL`,
+      [userId, contactId]
+    );
+
+    return res.json({
+      message: "Conversation deleted",
+      deletedCount: deletedAsSender.rowCount + deletedAsRecipient.rowCount,
+    });
+  } catch (err) {
+    console.error("Delete conversation error:", err);
     return res.status(500).json({ message: "Database error" });
   }
 });
@@ -1050,6 +1346,47 @@ app.patch("/reservations/:id/unarchive", async (req, res) => {
   }
 });
 
+// PATCH /reservations/:id/extend-duration
+app.patch("/reservations/:id/extend-duration", async (req, res) => {
+  const userId = await getUserIdFromToken(req);
+  if (userId === null) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  const { additional_months } = req.body as { additional_months?: number };
+  
+  if (!additional_months || additional_months <= 0) {
+    return res.status(400).json({ message: "additional_months must be a positive number" });
+  }
+
+  try {
+    const rid = Number(req.params.id);
+    
+    // Get current duration
+    const current = await pool.query(
+      "SELECT duration_months FROM reservations WHERE id = $1 AND dorm_owner_id = $2",
+      [rid, userId]
+    );
+    
+    if (current.rows.length === 0) {
+      return res.status(404).json({ message: "Reservation not found or not authorized" });
+    }
+
+    const newDuration = (current.rows[0].duration_months || 0) + additional_months;
+    
+    const result = await pool.query(
+      "UPDATE reservations SET duration_months = $1 WHERE id = $2 AND dorm_owner_id = $3 RETURNING *",
+      [newDuration, rid, userId]
+    );
+
+    return res.json({ message: `Contract extended by ${additional_months} month(s)`, reservation: result.rows[0] });
+  } catch (err) {
+    console.error("Extend duration error:", err);
+    const msg = process.env.NODE_ENV === 'production' ? 'Database error' : (err && (err as any).message) || 'Database error';
+    return res.status(500).json({ message: msg });
+  }
+});
+
 // DELETE /reservations/:id
 app.delete("/reservations/:id", async (req, res) => {
   const userId = await getUserIdFromToken(req);
@@ -1079,6 +1416,20 @@ app.delete("/reservations/:id", async (req, res) => {
 
 async function ensureSchema(): Promise<void> {
   try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id serial PRIMARY KEY,
+        sender_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        recipient_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        message text NOT NULL,
+        sender_deleted_at timestamptz,
+        recipient_deleted_at timestamptz,
+        created_at timestamp DEFAULT current_timestamp
+      );
+    `);
+    await pool.query("CREATE INDEX IF NOT EXISTS idx_messages_sender_recipient_created ON messages(sender_id, recipient_id, created_at);");
+    await pool.query("CREATE INDEX IF NOT EXISTS idx_messages_recipient_sender_created ON messages(recipient_id, sender_id, created_at);");
+
     await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS rejection_reason text;");
     // New columns for tenant response feature
     await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS tenant_action text;");
@@ -1113,7 +1464,7 @@ async function startServer() {
   app.set('io', io);
   
   httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running at http://192.168.68.124:${PORT}`);
+    console.log(`🚀 Server running at http://192.168.68.125:${PORT}`);
     console.log(`🔌 WebSocket server is ready`);
   });
 }
