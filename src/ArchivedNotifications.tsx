@@ -24,6 +24,8 @@ interface Reservation {
   payment_method: string;
   status: string;
   created_at: string;
+  advance_used?: boolean;
+  deposit_used?: boolean;
 }
 
 const statusColor = (status: string) => {

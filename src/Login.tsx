@@ -11,6 +11,7 @@ import {
   Checkbox,
   message,
 } from 'antd';
+import dormeaseLogo from './assets/dormease_logo.png';
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
@@ -118,7 +119,7 @@ const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onLoginSuccess }) => 
               padding: isMobile ? '28px 20px' : '60px 48px',
               display: 'flex',
               flexDirection: 'column',
-              alignItems: 'flex-start',
+              alignItems: 'center',
               justifyContent: 'center',
               position: 'relative',
               overflow: 'hidden',
@@ -148,7 +149,18 @@ const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onLoginSuccess }) => 
               }}
             />
 
-            <div style={{ zIndex: 1 }}>
+            <div style={{ zIndex: 1, textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              <img
+                src={dormeaseLogo}
+                alt="DormEase logo"
+                style={{
+                  width: isMobile ? 90 : 120,
+                  height: isMobile ? 90 : 120,
+                  objectFit: 'contain',
+                  display: 'block',
+                  marginBottom: 18,
+                }}
+              />
               <Title
                 level={1}
                 style={{

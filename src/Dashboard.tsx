@@ -32,6 +32,7 @@ import Settings from './Settings';
 import Messages from './Messages';
 import Notifications from './Notifications';
 import ArchivedNotifications from './ArchivedNotifications';
+import { useWebSocket } from './contexts/WebSocketContext';
 
 const { Header, Content } = Layout;
 const { Title, Text } = Typography;
@@ -82,6 +83,8 @@ interface Reservation {
   room_capacity?: number;
   dorm_id?: number;
   payments_paid?: number; // Number of payments marked as paid
+  advance_used?: boolean; // Whether advance has been used for payment
+  deposit_used?: boolean; // Whether deposit has been used for payment
 }
 
 interface DashboardProps {
@@ -95,6 +98,7 @@ const { Dragger } = Upload;
 const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplete }) => {
   const screens = useBreakpoint();
   const isMobile = !screens.md;
+  const { onNewMessage, offNewMessage } = useWebSocket();
 
   const [collapsed, setCollapsed] = useState(false);
   const [activeSection, setActiveSection] = useState<SectionKey>('home');
@@ -111,8 +115,36 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
   const [carouselOpen, setCarouselOpen] = useState(false);
   const [carouselIndex, setCarouselIndex] = useState(0);
   const [thumbStart, setThumbStart] = useState(0);
+  const [unreadMessageCount, setUnreadMessageCount] = useState(0);
+  const [conversationUnreadCounts, setConversationUnreadCounts] = useState<Record<number, number>>({});
+  const [hoveredTenantId, setHoveredTenantId] = useState<number | null>(null);
   const carouselRef = useRef<any>(null);
   const carouselClickCooldown = useRef(0);
+
+  // Global WebSocket listener for new messages (works on all pages)
+  useEffect(() => {
+    const handleNewMessage = (data: any) => {
+      const senderId = Number(data?.senderId);
+      if (!senderId) return;
+
+      // Update unread count for this sender
+      setConversationUnreadCounts((prev) => ({
+        ...prev,
+        [senderId]: (prev[senderId] || 0) + 1,
+      }));
+    };
+
+    onNewMessage(handleNewMessage);
+    return () => {
+      offNewMessage(handleNewMessage);
+    };
+  }, [onNewMessage, offNewMessage]);
+
+  // Calculate total unread count from all conversations
+  useEffect(() => {
+    const total = Object.values(conversationUnreadCounts).reduce((sum, count) => sum + count, 0);
+    setUnreadMessageCount(total);
+  }, [conversationUnreadCounts]);
 
   useEffect(() => {
     if (isMobile) {
@@ -411,7 +443,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
     }
   };
 
-  const markPaymentAsPaid = async (tenant: Reservation, paymentNumber: number) => {
+  const markPaymentAsPaid = async (tenant: Reservation, paymentNumber: number, paymentSource?: 'advance' | 'deposit') => {
     const confirmed = await new Promise<boolean>((resolve) => {
       Modal.confirm({
         title: 'Confirm payment',
@@ -445,7 +477,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ paymentNumber }),
+        body: JSON.stringify({ paymentNumber, paymentSource }),
       });
 
       if (!res.ok) {
@@ -1054,19 +1086,145 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
                             </div>
                           </Col>
                         </Row>
+
+                        {(tenant.advance > 0 || tenant.deposit > 0) && (
+                          <div style={{ 
+                            background: '#fafbfc', 
+                            padding: '12px 16px', 
+                            borderRadius: 8, 
+                            marginBottom: 16,
+                            border: '1px solid #e8e8e8',
+                          }}>
+                            <div style={{
+                              display: 'grid',
+                              gridTemplateColumns: tenant.advance > 0 && tenant.deposit > 0 ? '1fr 1fr' : '1fr',
+                              gap: 12,
+                            }}>
+                              {tenant.advance > 0 && (
+                                <div>
+                                  <Text type="secondary" style={{ fontSize: 11, fontWeight: 600, display: 'block', marginBottom: 4 }}>
+                                    ADVANCE {tenant.advance_used && <Tag color="default" style={{ fontSize: 9, padding: '0 4px', marginLeft: 4 }}>USED</Tag>}
+                                  </Text>
+                                  <Text strong style={{ fontSize: 15, color: tenant.advance_used ? '#999' : '#2979FF', display: 'block', marginBottom: 8, textDecoration: tenant.advance_used ? 'line-through' : 'none' }}>
+                                    ₱{Number(tenant.advance).toLocaleString()}
+                                  </Text>
+                                  {nextUnpaidPayment && !tenant.advance_used && (
+                                    <Button
+                                      type="primary"
+                                      size="small"
+                                      style={{ width: '100%', background: '#52c41a', borderColor: '#52c41a' }}
+                                      onClick={async () => {
+                                        const confirmed = await new Promise<boolean>((resolve) => {
+                                          Modal.confirm({
+                                            title: 'Use Advance for Payment',
+                                            width: isMobile ? 360 : 560,
+                                            content: (
+                                              <div>
+                                                <p>
+                                                  Use advance to mark <strong>Payment #{nextUnpaidPayment.monthNumber}</strong> for <strong>{tenant.full_name}</strong> as paid?
+                                                </p>
+                                                <Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
+                                                  Amount: <strong>₱{Number(tenant.price_per_month).toLocaleString()}</strong>
+                                                </Text>
+                                                <Text type="secondary" style={{ display: 'block', marginTop: 4 }}>
+                                                  Due: <strong>{nextUnpaidPayment.date.toLocaleDateString('en-US', { 
+                                                    year: 'numeric', 
+                                                    month: 'long', 
+                                                    day: 'numeric' 
+                                                  })}</strong>
+                                                </Text>
+                                              </div>
+                                            ),
+                                            okText: 'Yes, Use Advance',
+                                            cancelText: 'Cancel',
+                                            onOk: () => resolve(true),
+                                            onCancel: () => resolve(false),
+                                          });
+                                        });
+
+                                        if (confirmed) {
+                                          await markPaymentAsPaid(tenant, nextUnpaidPayment.monthNumber, 'advance');
+                                        }
+                                      }}
+                                    >
+                                      Use
+                                    </Button>
+                                  )}
+                                </div>
+                              )}
+                              {tenant.deposit > 0 && (
+                                <div>
+                                  <Text type="secondary" style={{ fontSize: 11, fontWeight: 600, display: 'block', marginBottom: 4 }}>
+                                    DEPOSIT {tenant.deposit_used && <Tag color="default" style={{ fontSize: 9, padding: '0 4px', marginLeft: 4 }}>USED</Tag>}
+                                  </Text>
+                                  <Text strong style={{ fontSize: 15, color: tenant.deposit_used ? '#999' : '#2979FF', display: 'block', marginBottom: 8, textDecoration: tenant.deposit_used ? 'line-through' : 'none' }}>
+                                    ₱{Number(tenant.deposit).toLocaleString()}
+                                  </Text>
+                                  {nextUnpaidPayment && !tenant.deposit_used && (
+                                    <Button
+                                      type="primary"
+                                      size="small"
+                                      style={{ width: '100%', background: '#52c41a', borderColor: '#52c41a' }}
+                                      onClick={async () => {
+                                        const confirmed = await new Promise<boolean>((resolve) => {
+                                          Modal.confirm({
+                                            title: 'Use Deposit for Payment',
+                                            width: isMobile ? 360 : 560,
+                                            content: (
+                                              <div>
+                                                <p>
+                                                  Use deposit to mark <strong>Payment #{nextUnpaidPayment.monthNumber}</strong> for <strong>{tenant.full_name}</strong> as paid?
+                                                </p>
+                                                <Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
+                                                  Amount: <strong>₱{Number(tenant.price_per_month).toLocaleString()}</strong>
+                                                </Text>
+                                                <Text type="secondary" style={{ display: 'block', marginTop: 4 }}>
+                                                  Due: <strong>{nextUnpaidPayment.date.toLocaleDateString('en-US', { 
+                                                    year: 'numeric', 
+                                                    month: 'long', 
+                                                    day: 'numeric' 
+                                                  })}</strong>
+                                                </Text>
+                                              </div>
+                                            ),
+                                            okText: 'Yes, Use Deposit',
+                                            cancelText: 'Cancel',
+                                            onOk: () => resolve(true),
+                                            onCancel: () => resolve(false),
+                                          });
+                                        });
+
+                                        if (confirmed) {
+                                          await markPaymentAsPaid(tenant, nextUnpaidPayment.monthNumber, 'deposit');
+                                        }
+                                      }}
+                                    >
+                                      Use
+                                    </Button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
                         
                         {paymentSchedule.length > 0 && (
-                          <Collapse
-                            ghost
-                            size="small"
-                            items={[
-                              {
-                                key: '1',
-                                label: (
-                                  <Text strong style={{ color: '#1e3a5f', fontSize: 13 }}>
-                                    View All {paymentSchedule.length} Payment{paymentSchedule.length !== 1 ? 's' : ''}
-                                  </Text>
-                                ),
+                          <div
+                            onMouseEnter={() => setHoveredTenantId(tenant.id)}
+                            onMouseLeave={() => setHoveredTenantId(null)}
+                          >
+                            <Collapse
+                              ghost
+                              size="small"
+                              activeKey={hoveredTenantId === tenant.id ? ['1'] : []}
+                              items={[
+                                {
+                                  key: '1',
+                                  label: (
+                                    <Text strong style={{ color: '#1e3a5f', fontSize: 13 }}>
+                                      View All {paymentSchedule.length} Payment{paymentSchedule.length !== 1 ? 's' : ''}
+                                    </Text>
+                                  ),
                                 children: (
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 8 }}>
                                     {paymentSchedule.map((payment, idx) => {
@@ -1141,6 +1299,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
                               },
                             ]}
                           />
+                          </div>
                         )}
                       </Card>
                     );
@@ -1157,7 +1316,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
       case 'settings':
         return <Settings />;
       case 'messages':
-        return <Messages />;
+        return (
+          <Messages 
+            onUnreadCountChange={setUnreadMessageCount}
+            conversationUnreadCounts={conversationUnreadCounts}
+            onConversationUnreadCountsChange={setConversationUnreadCounts}
+          />
+        );
       case 'notifications':
         return <Notifications onNavigate={setActiveSection} />;
       case 'archived':
@@ -1171,7 +1336,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
 
   return (
     <Layout style={{ minHeight: '100vh', height: '100vh', overflow: 'hidden' }}>
-      <Sidebar collapsed={collapsed} onCollapse={setCollapsed} activeSection={activeSection} onSectionChange={setActiveSection} isMobile={isMobile} />
+      <Sidebar collapsed={collapsed} onCollapse={setCollapsed} activeSection={activeSection} onSectionChange={setActiveSection} isMobile={isMobile} unreadMessageCount={unreadMessageCount} />
 
       {isMobile && !collapsed && (
         <div
@@ -1203,7 +1368,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
             <Dropdown
               open={notificationDropdownOpen}
               onOpenChange={setNotificationDropdownOpen}
-              trigger={['click']}
+              trigger={isMobile ? ['click'] : ['hover']}
               dropdownRender={() => (
                 <div style={{ background: '#fff', borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', width: isMobile ? '92vw' : 420, maxHeight: 500, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                   <div style={{ padding: '12px 16px', borderBottom: '1px solid #f0f0f0', fontWeight: 600, fontSize: 14 }}>
@@ -1268,7 +1433,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
               </Badge>
             </Dropdown>
             <Dropdown 
-              trigger={["click"]} 
+              trigger={isMobile ? ["click"] : ["hover"]} 
               menu={{ 
                 items: [
                   { 

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Layout, Menu } from 'antd';
+import { Layout, Menu, Badge } from 'antd';
 import {
   HomeOutlined,
   SettingOutlined,
@@ -17,6 +17,7 @@ interface SidebarProps {
   activeSection: SectionKey;
   onSectionChange: (section: SectionKey) => void;
   isMobile?: boolean;
+  unreadMessageCount?: number;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -25,11 +26,40 @@ const Sidebar: React.FC<SidebarProps> = ({
   activeSection,
   onSectionChange,
   isMobile = false,
+  unreadMessageCount = 0,
 }) => {
   // Define menu items in the visual order we want
   const menuItems = [
     { key: 'home', icon: <HomeOutlined />, label: 'Home' },
-    { key: 'messages', icon: <MessageOutlined />, label: 'Messages' },
+    {
+      key: 'messages',
+      icon: <MessageOutlined />,
+      label: (
+        <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+          <span>Messages</span>
+          {unreadMessageCount > 0 && (
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                minWidth: '20px',
+                height: '20px',
+                padding: '0 6px',
+                borderRadius: '10px',
+                backgroundColor: '#ff4d4f',
+                color: '#fff',
+                fontSize: '11px',
+                fontWeight: 'bold',
+                marginLeft: '8px',
+              }}
+            >
+              {unreadMessageCount > 9 ? '9+' : unreadMessageCount}
+            </span>
+          )}
+        </span>
+      ),
+    },
     { key: 'profile', icon: <UserOutlined />, label: 'Profile' },
     { key: 'settings', icon: <SettingOutlined />, label: 'Settings' },
   ];

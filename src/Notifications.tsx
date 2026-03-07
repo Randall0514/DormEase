@@ -38,6 +38,8 @@ interface Reservation {
   created_at: string;
   room_capacity?: number;
   dorm_id?: number;
+  advance_used?: boolean;
+  deposit_used?: boolean;
 }
 
 const statusColor = (status: string) => {

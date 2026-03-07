@@ -205,7 +205,6 @@ async function canAccessConversation(currentUserId: number, otherUserId: number)
     return true;
   }
 
-  // Allow access to existing conversations even if reservation status later changes.
   const existing = await pool.query(
     `SELECT 1
      FROM messages
@@ -488,7 +487,6 @@ app.patch("/auth/me", requireAuth, async (req, res) => {
   }
 });
 
-// POST /auth/request-change-otp - Request OTP for password/email changes
 app.post("/auth/request-change-otp", requireAuth, async (req, res) => {
   const userId = (req as express.Request & { userId: number }).userId;
   try {
@@ -496,19 +494,17 @@ app.post("/auth/request-change-otp", requireAuth, async (req, res) => {
     if (user.rows.length === 0) {
       return res.status(404).json({ message: "User not found" });
     }
-    
+
     const userEmail = user.rows[0].email;
     const existing = changeOtpStore.get(userId);
-    
-    // Check if OTP was recently sent
+
     if (existing && Date.now() - existing.lastSentAt < CHANGE_OTP_RESEND_SECONDS * 1000) {
       return res.status(429).json({ message: `Please wait ${Math.ceil((CHANGE_OTP_RESEND_SECONDS * 1000 - (Date.now() - existing.lastSentAt)) / 1000)} seconds before requesting again` });
     }
-    
-    // Generate new OTP
+
     const otp = generateSignupOtpCode();
     const expiresAt = Date.now() + CHANGE_OTP_TTL_MINUTES * 60 * 1000;
-    
+
     changeOtpStore.set(userId, {
       userId,
       code: otp,
@@ -516,8 +512,7 @@ app.post("/auth/request-change-otp", requireAuth, async (req, res) => {
       attempts: 0,
       lastSentAt: Date.now(),
     });
-    
-    // Send OTP email
+
     const transporter = getSmtpTransporter();
     if (transporter) {
       try {
@@ -540,7 +535,7 @@ app.post("/auth/request-change-otp", requireAuth, async (req, res) => {
         return res.status(500).json({ message: "Failed to send OTP email" });
       }
     }
-    
+
     res.json({ message: "OTP sent to your email", email: userEmail });
   } catch (err) {
     console.error("Request change OTP error:", err);
@@ -548,20 +543,19 @@ app.post("/auth/request-change-otp", requireAuth, async (req, res) => {
   }
 });
 
-// POST /auth/verify-change-otp - Verify OTP for password/email changes
 app.post("/auth/verify-change-otp", requireAuth, async (req, res) => {
   const userId = (req as express.Request & { userId: number }).userId;
   const { otp } = req.body as { otp?: string };
-  
+
   if (!otp) {
     return res.status(400).json({ message: "OTP is required" });
   }
-  
+
   const verification = verifyAndConsumeChangeOtp(userId, otp);
   if (!verification.ok) {
     return res.status(400).json({ message: verification.message || "Invalid OTP" });
   }
-  
+
   res.json({ message: "OTP verified successfully" });
 });
 
@@ -1022,7 +1016,6 @@ app.delete("/messages/:contactId", async (req, res) => {
 // RESERVATIONS
 // ─────────────────────────────────────────────
 
-// POST /reservations — tenant submits a reservation from Android
 app.post("/reservations", async (req, res) => {
   const {
     dorm_name, location, full_name, phone, move_in_date,
@@ -1071,7 +1064,6 @@ app.post("/reservations", async (req, res) => {
   }
 });
 
-// GET /reservations — web admin sees their dorm's reservations
 app.get("/reservations", async (req, res) => {
   const userId = await getUserIdFromToken(req);
   if (userId === null) {
@@ -1083,6 +1075,7 @@ app.get("/reservations", async (req, res) => {
               r.duration_months, r.price_per_month, r.deposit, r.advance, r.total_amount,
               r.notes, r.payment_method, r.status, r.rejection_reason, r.termination_reason,
               r.tenant_action, r.cancel_reason, r.tenant_action_at, r.payments_paid,
+              r.advance_used, r.deposit_used,
               r.created_at, d.room_capacity, d.id as dorm_id
        FROM reservations r
        LEFT JOIN dorms d ON d.user_id = r.dorm_owner_id
@@ -1097,7 +1090,13 @@ app.get("/reservations", async (req, res) => {
   }
 });
 
-// GET /reservations/tenant?phone=09XXXXXXXXX — Android polls for status updates
+// ─────────────────────────────────────────────
+// GET /reservations/tenant — Android polls for status + dashboard data
+// Returns ALL fields needed by TenantDashboardActivity, including
+// tenant_action, payments_paid, advance_used, deposit_used, and owner_name.
+// IMPORTANT: must be declared BEFORE /reservations/:id routes so Express
+// does not match "tenant" or "tenant/me" as a numeric id.
+// ─────────────────────────────────────────────
 app.get("/reservations/tenant", async (req, res) => {
   const { phone } = req.query as { phone?: string };
   if (!phone) {
@@ -1110,12 +1109,36 @@ app.get("/reservations/tenant", async (req, res) => {
   }
   try {
     const result = await pool.query(
-      `SELECT id, dorm_name, location, full_name, phone, move_in_date,
-              duration_months, price_per_month, deposit, advance, total_amount,
-              notes, payment_method, status, rejection_reason, termination_reason, created_at
-       FROM reservations
-       WHERE regexp_replace(phone, '[^0-9]', '', 'g') LIKE $1
-       ORDER BY created_at DESC`,
+      `SELECT
+         r.id,
+         r.dorm_name,
+         r.location,
+         r.full_name,
+         r.phone,
+         r.move_in_date,
+         r.duration_months,
+         r.price_per_month,
+         r.deposit,
+         r.advance,
+         r.total_amount,
+         r.notes,
+         r.payment_method,
+         r.status,
+         r.rejection_reason,
+         r.termination_reason,
+         r.tenant_action,
+         r.cancel_reason,
+         r.tenant_action_at,
+         r.payments_paid,
+         r.advance_used,
+         r.deposit_used,
+         r.created_at,
+         r.dorm_owner_id,
+         u.full_name AS owner_name
+       FROM reservations r
+       LEFT JOIN users u ON u.id = r.dorm_owner_id
+       WHERE regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE $1
+       ORDER BY r.created_at DESC`,
       [`%${last10}`]
     );
     return res.json(result.rows);
@@ -1125,7 +1148,66 @@ app.get("/reservations/tenant", async (req, res) => {
   }
 });
 
-// PATCH /reservations/:id/status — owner approves or rejects
+// ─────────────────────────────────────────────
+// GET /reservations/tenant/me — token-based fallback lookup
+// Used by TenantDashboardActivity when no phone is stored locally.
+// Identifies the tenant via their Bearer token → looks up their full_name
+// → returns all reservations matching that name.
+// ─────────────────────────────────────────────
+app.get("/reservations/tenant/me", async (req, res) => {
+  const userId = await getUserIdFromToken(req);
+  if (userId === null) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+  try {
+    const userResult = await pool.query(
+      "SELECT full_name FROM users WHERE id = $1",
+      [userId]
+    );
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    const fullName = userResult.rows[0].full_name;
+    const result = await pool.query(
+      `SELECT
+         r.id,
+         r.dorm_name,
+         r.location,
+         r.full_name,
+         r.phone,
+         r.move_in_date,
+         r.duration_months,
+         r.price_per_month,
+         r.deposit,
+         r.advance,
+         r.total_amount,
+         r.notes,
+         r.payment_method,
+         r.status,
+         r.rejection_reason,
+         r.termination_reason,
+         r.tenant_action,
+         r.cancel_reason,
+         r.tenant_action_at,
+         r.payments_paid,
+         r.advance_used,
+         r.deposit_used,
+         r.created_at,
+         r.dorm_owner_id,
+         u.full_name AS owner_name
+       FROM reservations r
+       LEFT JOIN users u ON u.id = r.dorm_owner_id
+       WHERE lower(trim(r.full_name)) = lower(trim($1))
+       ORDER BY r.created_at DESC`,
+      [fullName]
+    );
+    return res.json(result.rows);
+  } catch (err) {
+    console.error("Tenant/me reservation error:", err);
+    return res.status(500).json({ message: "Database error" });
+  }
+});
+
 app.patch("/reservations/:id/status", async (req, res) => {
   const userId = await getUserIdFromToken(req);
   if (userId === null) {
@@ -1155,8 +1237,7 @@ app.patch("/reservations/:id/status", async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ message: "Reservation not found or not authorized" });
     }
-    
-    // Send WebSocket notification to owner
+
     const io = req.app.get('io');
     if (io) {
       notifyUser(io, userId, 'reservation_updated', {
@@ -1165,7 +1246,7 @@ app.patch("/reservations/:id/status", async (req, res) => {
         message: `Reservation ${status === 'approved' ? 'approved' : 'rejected'}`,
       });
     }
-    
+
     return res.json({ message: "Status updated", reservation: result.rows[0] });
   } catch (err) {
     console.error("Update status error:", err);
@@ -1174,11 +1255,6 @@ app.patch("/reservations/:id/status", async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────
-// PATCH /reservations/:id/tenant-action
-// Called by the Android app when the tenant taps Accept or Cancel.
-// No auth token required — ownership verified via phone number.
-// ─────────────────────────────────────────────
 app.patch("/reservations/:id/tenant-action", async (req, res) => {
   const { action, phone, cancel_reason } = req.body as {
     action?: string;
@@ -1205,7 +1281,6 @@ app.patch("/reservations/:id/tenant-action", async (req, res) => {
   const last10 = digits.slice(-10);
 
   try {
-    // Verify the reservation belongs to this phone before updating
     const check = await pool.query(
       `SELECT id FROM reservations
        WHERE id = $1
@@ -1229,8 +1304,7 @@ app.patch("/reservations/:id/tenant-action", async (req, res) => {
         rid,
       ]
     );
-    
-    // Send WebSocket notification to dorm owner
+
     const io = req.app.get('io');
     if (io && result.rows[0]?.dorm_owner_id) {
       notifyUser(io, result.rows[0].dorm_owner_id, 'reservation_updated', {
@@ -1239,7 +1313,7 @@ app.patch("/reservations/:id/tenant-action", async (req, res) => {
         message: `Tenant has ${action} the reservation`,
       });
     }
-    
+
     return res.json({ message: "Tenant action recorded", reservation: result.rows[0] });
   } catch (err) {
     console.error("Tenant action error:", err);
@@ -1247,7 +1321,6 @@ app.patch("/reservations/:id/tenant-action", async (req, res) => {
   }
 });
 
-// PATCH /reservations/:id/mark-payment-paid
 app.patch("/reservations/:id/mark-payment-paid", async (req, res) => {
   const userId = await getUserIdFromToken(req);
   if (userId === null) {
@@ -1255,42 +1328,49 @@ app.patch("/reservations/:id/mark-payment-paid", async (req, res) => {
   }
   try {
     const rid = Number(req.params.id);
-    const { paymentNumber } = req.body;
-    
+    const { paymentNumber, paymentSource } = req.body;
+
     if (!paymentNumber || paymentNumber < 1) {
       return res.status(400).json({ message: "Invalid payment number" });
     }
-    
-    // Get current payments_paid count
+
     const current = await pool.query(
-      "SELECT payments_paid, duration_months FROM reservations WHERE id = $1 AND dorm_owner_id = $2",
+      "SELECT payments_paid, duration_months, advance_used, deposit_used FROM reservations WHERE id = $1 AND dorm_owner_id = $2",
       [rid, userId]
     );
-    
+
     if (current.rows.length === 0) {
       return res.status(404).json({ message: "Reservation not found or not authorized" });
     }
-    
-    const currentPaid = current.rows[0].payments_paid || 0;
-    const totalPayments = current.rows[0].duration_months;
-    
-    // Only allow marking the next unpaid payment
+
+    const currentPaid    = current.rows[0].payments_paid || 0;
+    const totalPayments  = current.rows[0].duration_months;
+    const advanceUsed    = current.rows[0].advance_used || false;
+    const depositUsed    = current.rows[0].deposit_used || false;
+
+    if (paymentSource === 'advance' && advanceUsed) {
+      return res.status(400).json({ message: "Advance has already been used" });
+    }
+    if (paymentSource === 'deposit' && depositUsed) {
+      return res.status(400).json({ message: "Deposit has already been used" });
+    }
     if (paymentNumber !== currentPaid + 1) {
-      return res.status(400).json({ 
-        message: `Can only mark payment #${currentPaid + 1} as paid. Please pay in order.` 
+      return res.status(400).json({
+        message: `Can only mark payment #${currentPaid + 1} as paid. Please pay in order.`
       });
     }
-    
     if (paymentNumber > totalPayments) {
       return res.status(400).json({ message: "Payment number exceeds contract duration" });
     }
-    
-    // Update payments_paid
-    const result = await pool.query(
-      "UPDATE reservations SET payments_paid = $1 WHERE id = $2 AND dorm_owner_id = $3 RETURNING *",
-      [paymentNumber, rid, userId]
-    );
-    
+
+    let updateQuery = "UPDATE reservations SET payments_paid = $1";
+    const params: any[] = [paymentNumber];
+    if (paymentSource === 'advance') updateQuery += `, advance_used = true`;
+    else if (paymentSource === 'deposit') updateQuery += `, deposit_used = true`;
+    updateQuery += ` WHERE id = $2 AND dorm_owner_id = $3 RETURNING *`;
+    params.push(rid, userId);
+
+    const result = await pool.query(updateQuery, params);
     return res.json({ message: "Payment marked as paid", reservation: result.rows[0] });
   } catch (err) {
     console.error("Mark payment paid error:", err);
@@ -1298,14 +1378,12 @@ app.patch("/reservations/:id/mark-payment-paid", async (req, res) => {
   }
 });
 
-// PATCH /reservations/:id/archive
 app.patch("/reservations/:id/archive", async (req, res) => {
   const userId = await getUserIdFromToken(req);
   if (userId === null) {
     return res.status(401).json({ message: "Unauthorized" });
   }
   const { termination_reason } = req.body as { termination_reason?: string };
-  
   try {
     const rid = Number(req.params.id);
     const result = await pool.query(
@@ -1323,7 +1401,6 @@ app.patch("/reservations/:id/archive", async (req, res) => {
   }
 });
 
-// PATCH /reservations/:id/unarchive
 app.patch("/reservations/:id/unarchive", async (req, res) => {
   const userId = await getUserIdFromToken(req);
   if (userId === null) {
@@ -1346,39 +1423,29 @@ app.patch("/reservations/:id/unarchive", async (req, res) => {
   }
 });
 
-// PATCH /reservations/:id/extend-duration
 app.patch("/reservations/:id/extend-duration", async (req, res) => {
   const userId = await getUserIdFromToken(req);
   if (userId === null) {
     return res.status(401).json({ message: "Unauthorized" });
   }
-
   const { additional_months } = req.body as { additional_months?: number };
-  
   if (!additional_months || additional_months <= 0) {
     return res.status(400).json({ message: "additional_months must be a positive number" });
   }
-
   try {
     const rid = Number(req.params.id);
-    
-    // Get current duration
     const current = await pool.query(
       "SELECT duration_months FROM reservations WHERE id = $1 AND dorm_owner_id = $2",
       [rid, userId]
     );
-    
     if (current.rows.length === 0) {
       return res.status(404).json({ message: "Reservation not found or not authorized" });
     }
-
     const newDuration = (current.rows[0].duration_months || 0) + additional_months;
-    
     const result = await pool.query(
       "UPDATE reservations SET duration_months = $1 WHERE id = $2 AND dorm_owner_id = $3 RETURNING *",
       [newDuration, rid, userId]
     );
-
     return res.json({ message: `Contract extended by ${additional_months} month(s)`, reservation: result.rows[0] });
   } catch (err) {
     console.error("Extend duration error:", err);
@@ -1387,7 +1454,6 @@ app.patch("/reservations/:id/extend-duration", async (req, res) => {
   }
 });
 
-// DELETE /reservations/:id
 app.delete("/reservations/:id", async (req, res) => {
   const userId = await getUserIdFromToken(req);
   if (userId === null) {
@@ -1430,13 +1496,18 @@ async function ensureSchema(): Promise<void> {
     await pool.query("CREATE INDEX IF NOT EXISTS idx_messages_sender_recipient_created ON messages(sender_id, recipient_id, created_at);");
     await pool.query("CREATE INDEX IF NOT EXISTS idx_messages_recipient_sender_created ON messages(recipient_id, sender_id, created_at);");
 
+    // Existing columns
     await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS rejection_reason text;");
-    // New columns for tenant response feature
     await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS tenant_action text;");
     await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS cancel_reason text;");
     await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS tenant_action_at timestamptz;");
-    // Termination reason column
     await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS termination_reason text;");
+
+    // ── Columns required by TenantDashboardActivity ───────────────────────
+    await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS payments_paid integer NOT NULL DEFAULT 0;");
+    await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS advance_used boolean NOT NULL DEFAULT false;");
+    await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS deposit_used boolean NOT NULL DEFAULT false;");
+
     console.log('✅ Schema up to date');
   } catch (err) {
     console.error('Error ensuring schema:', err);
@@ -1449,24 +1520,18 @@ async function ensureSchema(): Promise<void> {
 
 async function startServer() {
   await ensureSchema();
-  
-  // Create HTTP server
+
   const httpServer = http.createServer(app);
-  
-  // Initialize WebSocket
   const io = initializeWebSocket(httpServer);
-  
-  // Store io instance on the server for easy access in routes
+
   // @ts-ignore
   httpServer._socketio = io;
-  
-  // Store io globally for use in route handlers
   app.set('io', io);
-  
+
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running at http://10.37.20.131:${PORT}`);
     console.log(`🔌 WebSocket server is ready`);
   });
 }
 
-startServer(); 
+startServer();

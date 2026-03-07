@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, Typography, Empty, Grid, List, Input, Button, Avatar, Space, Badge, Modal, message as antdMessage } from 'antd';
-import { SendOutlined, ArrowLeftOutlined, DeleteOutlined } from '@ant-design/icons';
+import { SendOutlined, ArrowLeftOutlined, DeleteOutlined, CheckOutlined } from '@ant-design/icons';
 import { useWebSocket } from './contexts/WebSocketContext';
 
 const { Title, Text } = Typography;
@@ -52,9 +52,16 @@ interface MessageHistoryRow {
 
 type Props = {
   onNavigate?: (section: string) => void;
+  onUnreadCountChange?: (count: number) => void;
+  conversationUnreadCounts?: Record<number, number>;
+  onConversationUnreadCountsChange?: (counts: Record<number, number>) => void;
 };
 
-const Messages: React.FC<Props> = () => {
+const Messages: React.FC<Props> = ({ 
+  onUnreadCountChange,
+  conversationUnreadCounts = {},
+  onConversationUnreadCountsChange,
+}) => {
   const screens = useBreakpoint();
   const isMobile = !screens.md;
   const { sendMessage, onNewMessage, offNewMessage, isConnected } = useWebSocket();
@@ -80,6 +87,12 @@ const Messages: React.FC<Props> = () => {
     () => (selectedConversationId ? messagesByUser[selectedConversationId] ?? [] : []),
     [selectedConversationId, messagesByUser]
   );
+
+  // Calculate and notify parent of total unread count
+  useEffect(() => {
+    const totalUnread = conversations.reduce((sum, conv) => sum + conv.unreadCount, 0);
+    onUnreadCountChange?.(totalUnread);
+  }, [conversations, onUnreadCountChange]);
 
   const filteredConversations = useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase();
@@ -145,17 +158,20 @@ const Messages: React.FC<Props> = () => {
         setConversations(
           usersData
             .filter((user) => Number(user.id) !== myId)
-            .map((user) => ({
-              userId: Number(user.id),
-              userName: getDisplayName(user),
-              preview: user.last_message
-                ? Number(user.last_sender_id) === myId
-                  ? `You: ${user.last_message}`
-                  : user.last_message
-                : 'Start a conversation',
-              unreadCount: 0,
-              updatedAt: user.last_message_at || new Date(0).toISOString(),
-            }))
+            .map((user) => {
+              const userId = Number(user.id);
+              return {
+                userId,
+                userName: getDisplayName(user),
+                preview: user.last_message
+                  ? Number(user.last_sender_id) === myId
+                    ? `You: ${user.last_message}`
+                    : user.last_message
+                  : 'Start a conversation',
+                unreadCount: conversationUnreadCounts[userId] || 0,
+                updatedAt: user.last_message_at || new Date(0).toISOString(),
+              };
+            })
         );
       } catch {
         antdMessage.error('Unable to load users for messaging.');
@@ -165,7 +181,17 @@ const Messages: React.FC<Props> = () => {
     };
 
     loadConversations();
-  }, []);
+  }, [conversationUnreadCounts]);
+
+  // Sync local conversations with global unread counts
+  useEffect(() => {
+    setConversations((prev) =>
+      prev.map((conv) => ({
+        ...conv,
+        unreadCount: conversationUnreadCounts[conv.userId] || 0,
+      }))
+    );
+  }, [conversationUnreadCounts]);
 
   useEffect(() => {
     const handleNewMessage = (data: any) => {
@@ -202,7 +228,7 @@ const Messages: React.FC<Props> = () => {
               userId: senderId,
               userName: senderName,
               preview: incomingText,
-              unreadCount: selectedConversationId === senderId ? 0 : 1,
+              unreadCount: conversationUnreadCounts[senderId] || 0,
               updatedAt: incomingTimestamp,
             },
             ...previous,
@@ -216,7 +242,7 @@ const Messages: React.FC<Props> = () => {
           return {
             ...conversation,
             preview: incomingText,
-            unreadCount: selectedConversationId === senderId ? 0 : conversation.unreadCount + 1,
+            unreadCount: conversationUnreadCounts[senderId] || 0,
             updatedAt: incomingTimestamp,
           };
         });
@@ -231,7 +257,7 @@ const Messages: React.FC<Props> = () => {
     return () => {
       offNewMessage(handleNewMessage);
     };
-  }, [currentUserId, selectedConversationId, onNewMessage, offNewMessage]);
+  }, [currentUserId, selectedConversationId, conversationUnreadCounts, onNewMessage, offNewMessage]);
 
   const getAvatarLabel = (name: string) => {
     const cleanName = name.trim();
@@ -286,15 +312,29 @@ const Messages: React.FC<Props> = () => {
 
   const openConversation = (userId: number) => {
     setSelectedConversationId(userId);
+    void loadConversationHistory(userId);
+  };
+
+  const markAsRead = () => {
+    if (!selectedConversationId) return;
+    
+    // Clear unread count in global state
+    if (onConversationUnreadCountsChange) {
+      onConversationUnreadCountsChange({
+        ...conversationUnreadCounts,
+        [selectedConversationId]: 0,
+      });
+    }
+    
+    // Update local conversations
     setConversations((previous) =>
       previous.map((conversation) =>
-        conversation.userId === userId
+        conversation.userId === selectedConversationId
           ? { ...conversation, unreadCount: 0 }
           : conversation
       )
     );
-
-    void loadConversationHistory(userId);
+    antdMessage.success('Marked as read');
   };
 
   const handleDeleteConversation = async () => {
@@ -393,6 +433,14 @@ const Messages: React.FC<Props> = () => {
     }));
     loadedHistoryRef.current[selectedConversationId] = true;
 
+    // Clear unread count in global state when sending a message
+    if (onConversationUnreadCountsChange) {
+      onConversationUnreadCountsChange({
+        ...conversationUnreadCounts,
+        [selectedConversationId]: 0,
+      });
+    }
+
     setConversations((previous) =>
       previous.map((conversation) =>
         conversation.userId === selectedConversationId
@@ -400,6 +448,7 @@ const Messages: React.FC<Props> = () => {
               ...conversation,
               preview: `You: ${trimmed}`,
               updatedAt: outgoingTimestamp,
+              unreadCount: 0,
             }
           : conversation
       )
@@ -460,33 +509,63 @@ const Messages: React.FC<Props> = () => {
                         border: '1px solid #dde2ea',
                         borderRadius: 12,
                         marginBottom: 8,
-                        padding: '10px 12px',
+                        padding: '12px',
                         background: selectedConversationId === conversation.userId ? '#e9f2ff' : '#ffffff',
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: 12,
                       }}
                     >
-                      <List.Item.Meta
-                        avatar={
-                          <Avatar size={46} style={{ background: '#e7e7e7', color: '#000', fontWeight: 700 }}>
-                            {getAvatarLabel(conversation.userName)}
-                          </Avatar>
-                        }
-                        title={
-                          <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-                            <Text strong style={{ fontSize: 20, lineHeight: 1.1 }}>
+                      <Avatar size={46} style={{ background: '#e7e7e7', color: '#000', fontWeight: 700, flexShrink: 0 }}>
+                        {getAvatarLabel(conversation.userName)}
+                      </Avatar>
+                      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <Text strong style={{ fontSize: 15, display: 'block', lineHeight: 1.2 }}>
                               {conversation.userName}
                             </Text>
-                            <Space size={6}>
-                              {conversation.unreadCount > 0 && <Badge count={conversation.unreadCount} />}
-                              {formatTime(conversation.updatedAt) ? (
-                                <Text type="secondary" style={{ fontSize: 11 }}>
-                                  {formatTime(conversation.updatedAt)}
-                                </Text>
-                              ) : null}
-                            </Space>
-                          </Space>
-                        }
-                        description={<Text style={{ color: '#5a6372' }}>{conversation.preview}</Text>}
-                      />
+                          </div>
+                          <Text type="secondary" style={{ fontSize: 11, flexShrink: 0 }}>
+                            {formatTime(conversation.updatedAt)}
+                          </Text>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                          <Text 
+                            style={{ 
+                              color: '#5a6372', 
+                              fontSize: 13, 
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              flex: 1,
+                              minWidth: 0
+                            }}
+                          >
+                            {conversation.preview}
+                          </Text>
+                          {conversation.unreadCount > 0 && (
+                            <span
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                minWidth: '24px',
+                                height: '24px',
+                                padding: '0 8px',
+                                borderRadius: '12px',
+                                backgroundColor: '#ff4d4f',
+                                color: '#fff',
+                                fontSize: '12px',
+                                fontWeight: 'bold',
+                                flexShrink: 0,
+                              }}
+                            >
+                              {conversation.unreadCount > 9 ? '9+' : conversation.unreadCount}
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </List.Item>
                   )}
                 />
@@ -501,9 +580,10 @@ const Messages: React.FC<Props> = () => {
                 minWidth: 0,
                 minHeight: 0,
                 overflow: 'hidden',
-                border: '1px solid #d9deea',
+                border: 'none',
                 borderRadius: 12,
-                background: '#f4f7fc',
+                background: '#fff',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
               }}
             >
               {!selectedConversation ? (
@@ -516,10 +596,10 @@ const Messages: React.FC<Props> = () => {
                     style={{
                       display: 'flex',
                       alignItems: 'center',
-                      gap: 10,
-                      padding: '10px 12px',
-                      borderBottom: '1px solid #d9deea',
-                      background: '#0f355d',
+                      gap: 12,
+                      padding: '14px 16px',
+                      borderBottom: 'none',
+                      background: '#2C3E50',
                       color: '#fff',
                     }}
                   >
@@ -531,27 +611,69 @@ const Messages: React.FC<Props> = () => {
                         style={{ color: '#fff' }}
                       />
                     ) : null}
-                    <Avatar size={40} style={{ background: '#e7e7e7', color: '#000', fontWeight: 700 }}>
-                      {getAvatarLabel(selectedConversation.userName)}
-                    </Avatar>
-                    <div style={{ minWidth: 0 }}>
-                      <Text strong style={{ display: 'block', color: '#fff' }}>
+                    <div style={{ position: 'relative' }}>
+                      <Avatar size={44} style={{ background: '#4e73ff', color: '#fff', fontWeight: 700, fontSize: 18 }}>
+                        {getAvatarLabel(selectedConversation.userName)}
+                      </Avatar>
+                      {isConnected && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            bottom: 0,
+                            right: 0,
+                            width: 14,
+                            height: 14,
+                            borderRadius: '50%',
+                            background: '#52c41a',
+                            border: '2px solid #2C3E50',
+                          }}
+                        />
+                      )}
+                    </div>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <Text strong style={{ display: 'block', color: '#fff', fontSize: 16 }}>
                         {selectedConversation.userName}
                       </Text>
-                      <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)' }}>
-                        {isConnected ? 'Active now' : 'Offline'}
-                      </Text>
+                      <Space size={8} style={{ fontSize: 12 }}>
+                        <Text style={{ color: 'rgba(255,255,255,0.85)' }}>
+                          {isConnected ? 'Active now' : 'Offline'}
+                        </Text>
+                        {selectedConversation.userName.includes('Tenant') && (
+                          <Badge
+                            count="TENANT"
+                            style={{
+                              backgroundColor: 'rgba(255,255,255,0.2)',
+                              color: '#fff',
+                              fontSize: 10,
+                              fontWeight: 600,
+                              height: 18,
+                              lineHeight: '18px',
+                            }}
+                          />
+                        )}
+                      </Space>
                     </div>
-                    <Button
-                      danger
-                      size="small"
-                      icon={<DeleteOutlined />}
-                      onClick={handleDeleteConversation}
-                      loading={deletingConversationId === selectedConversation.userId}
-                      style={{ marginLeft: 'auto' }}
-                    >
-                      Delete Conversation
-                    </Button>
+                    <Space>
+                      {selectedConversation.unreadCount > 0 && (
+                        <Button
+                          type="primary"
+                          icon={<CheckOutlined />}
+                          onClick={markAsRead}
+                          style={{ backgroundColor: '#52c41a', borderColor: '#52c41a', fontWeight: 600 }}
+                        >
+                          Mark as Read
+                        </Button>
+                      )}
+                      <Button
+                        danger
+                        icon={<DeleteOutlined />}
+                        onClick={handleDeleteConversation}
+                        loading={deletingConversationId === selectedConversation.userId}
+                        style={{ fontWeight: 600 }}
+                      >
+                        Delete
+                      </Button>
+                    </Space>
                   </div>
 
                   <div
@@ -560,10 +682,11 @@ const Messages: React.FC<Props> = () => {
                       minHeight: 0,
                       overflowY: 'auto',
                       overflowX: 'hidden',
-                      padding: '12px',
+                      padding: '20px',
                       display: 'flex',
                       flexDirection: 'column',
-                      gap: 10,
+                      gap: 16,
+                      background: '#E9ECEF',
                     }}
                   >
                     {loadingHistoryByUser[selectedConversation.userId] ? (
@@ -575,54 +698,85 @@ const Messages: React.FC<Props> = () => {
                         No messages yet. Say hello 👋
                       </Text>
                     ) : (
-                      selectedMessages.map((item) => (
-                        <div
-                          key={item.id}
-                          style={{
-                            display: 'flex',
-                            justifyContent: item.isMine ? 'flex-end' : 'flex-start',
-                          }}
-                        >
-                          <div
-                            style={{
-                              maxWidth: '75%',
-                              padding: '9px 12px',
-                              borderRadius: 16,
-                              background: item.isMine ? '#1681ff' : '#ffffff',
-                              border: item.isMine ? 'none' : '1px solid #e2e8f0',
-                              boxShadow: item.isMine ? 'none' : '0 1px 2px rgba(15, 23, 42, 0.06)',
-                            }}
-                          >
-                            <Text style={{ color: item.isMine ? '#fff' : '#111' }}>{item.text}</Text>
-                            <div style={{ marginTop: 4 }}>
-                              <Text style={{ fontSize: 11, color: item.isMine ? 'rgba(255,255,255,0.8)' : '#666' }}>
-                                {formatTime(item.timestamp)}
-                              </Text>
+                      selectedMessages.map((item, index) => {
+                        const showDate = index === 0 || 
+                          new Date(selectedMessages[index - 1].timestamp).toDateString() !== 
+                          new Date(item.timestamp).toDateString();
+                        
+                        return (
+                          <React.Fragment key={item.id}>
+                            {showDate && (
+                              <div style={{ textAlign: 'center', margin: '8px 0' }}>
+                                <Text type="secondary" style={{ fontSize: 12 }}>
+                                  {new Date(item.timestamp).toLocaleDateString('en-US', { 
+                                    weekday: 'short', 
+                                    month: 'short', 
+                                    day: 'numeric' 
+                                  })} · {formatTime(item.timestamp)}
+                                </Text>
+                              </div>
+                            )}
+                            <div
+                              style={{
+                                display: 'flex',
+                                justifyContent: item.isMine ? 'flex-end' : 'flex-start',
+                                gap: 8,
+                                alignItems: 'flex-end',
+                              }}
+                            >
+                              {!item.isMine && (
+                                <Avatar size={32} style={{ background: '#4e73ff', color: '#fff', fontWeight: 700, flexShrink: 0 }}>
+                                  {getAvatarLabel(selectedConversation.userName)}
+                                </Avatar>
+                              )}
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: item.isMine ? 'flex-end' : 'flex-start', maxWidth: '65%' }}>
+                                <div
+                                  style={{
+                                    padding: '10px 14px',
+                                    borderRadius: item.isMine ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
+                                    background: item.isMine ? '#1890ff' : '#ffffff',
+                                    boxShadow: '0 1px 2px rgba(0, 0, 0, 0.1)',
+                                  }}
+                                >
+                                  <Text style={{ color: item.isMine ? '#fff' : '#000', fontSize: 14, lineHeight: 1.5 }}>{item.text}</Text>
+                                </div>
+                                <Text style={{ fontSize: 11, color: '#999', marginTop: 4, marginLeft: item.isMine ? 0 : 8, marginRight: item.isMine ? 8 : 0 }}>
+                                  {formatTime(item.timestamp)}
+                                </Text>
+                              </div>
                             </div>
-                          </div>
-                        </div>
-                      ))
+                          </React.Fragment>
+                        );
+                      })
                     )}
                     <div ref={messagesEndRef} />
                   </div>
 
-                  <Space.Compact style={{ width: '100%', padding: 12, borderTop: '1px solid #d9deea', background: '#fff' }}>
+                  <div style={{ padding: '12px 16px', background: '#fff', borderTop: '1px solid #e0e0e0', display: 'flex', gap: 12, alignItems: 'center' }}>
                     <Input
                       value={draftMessage}
                       onChange={(event) => setDraftMessage(event.target.value)}
                       onPressEnter={handleSendMessage}
-                      placeholder="Type a message"
+                      placeholder="Type a message..."
                       disabled={!isConnected}
+                      style={{
+                        flex: 1,
+                        borderRadius: 20,
+                        padding: '8px 16px',
+                        background: '#F8F9FA',
+                        border: 'none',
+                      }}
                     />
                     <Button
                       type="primary"
+                      shape="circle"
                       icon={<SendOutlined />}
+                      size="large"
                       onClick={handleSendMessage}
                       disabled={!isConnected || !draftMessage.trim()}
-                    >
-                      Send
-                    </Button>
-                  </Space.Compact>
+                      style={{ width: 42, height: 42 }}
+                    />
+                  </div>
                 </>
               )}
             </div>
