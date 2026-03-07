@@ -1464,7 +1464,7 @@ async function startServer() {
   app.set('io', io);
   
   httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running at http://192.168.68.125:${PORT}`);
+    console.log(`🚀 Server running at http://10.37.20.131:${PORT}`);
     console.log(`🔌 WebSocket server is ready`);
   });
 }
