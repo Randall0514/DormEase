@@ -5,7 +5,6 @@ import {
   Typography,
   Space,
   Button,
-  List,
   Row,
   Col,
   Descriptions,
@@ -18,14 +17,21 @@ import {
   Badge,
   Tag,
   Grid,
+  Table,
+  Tabs,
+  Alert,
 } from 'antd';
 import {
   UserOutlined,
-  SafetyOutlined,
   EditOutlined,
   MailOutlined,
   LogoutOutlined,
   CheckCircleOutlined,
+  DollarOutlined,
+  LockOutlined,
+  InfoCircleOutlined,
+  CreditCardOutlined,
+  SearchOutlined,
 } from '@ant-design/icons';
 
 const { Title, Text } = Typography;
@@ -34,15 +40,11 @@ const { useBreakpoint } = Grid;
 const Profile: React.FC = () => {
   const screens = useBreakpoint();
   const isMobile = !screens.md;
+  const isDarkMode = document.body.classList.contains('dark-mode');
   const [user, setUser] = useState<{ id?: number; username?: string; email?: string; fullName?: string; platform?: string } | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const menuItems = [
-    { key: 'personal', icon: <UserOutlined />, label: 'Personal Information', description: 'Manage your profile details' },
-    { key: 'security', icon: <SafetyOutlined />, label: 'Login & Security', description: 'Update password and email' },
-  ];
-
-  const [section, setSection] = useState<'personal' | 'security'>('personal');
+  const [activeTab, setActiveTab] = useState<string>('personal');
   const [editing, setEditing] = useState(false);
   const [form] = Form.useForm();
   const [passForm] = Form.useForm();
@@ -60,6 +62,12 @@ const Profile: React.FC = () => {
   const [currentOtpAction, setCurrentOtpAction] = useState<'password' | 'email'>('password');
   const [passwordOtpVerified, setPasswordOtpVerified] = useState(false);
   const [emailOtpVerified, setEmailOtpVerified] = useState(false);
+  
+  // Payment history states
+  const [payments, setPayments] = useState<any[]>([]);
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [paymentStats, setPaymentStats] = useState<any>(null);
+  const [searchQuery, setSearchQuery] = useState<string>('');
 
   useEffect(() => {
     const token = localStorage.getItem('dormease_token');
@@ -91,7 +99,7 @@ const Profile: React.FC = () => {
 
   // Clear forms when opening security section
   useEffect(() => {
-    if (section === 'security') {
+    if (activeTab === 'security') {
       passForm.resetFields();
       emailForm.resetFields();
       // Delay to ensure React has rendered the inputs
@@ -102,7 +110,7 @@ const Profile: React.FC = () => {
         passwordInputs.forEach((input: any) => { input.value = ''; });
       }, 100);
     }
-  }, [section, passForm, emailForm]);
+  }, [activeTab, passForm, emailForm]);
 
   const handleLogout = async () => {
     const token = localStorage.getItem('dormease_token');
@@ -116,6 +124,49 @@ const Profile: React.FC = () => {
     message.success('Logged out successfully');
     window.location.href = '/';
   };
+
+  const fetchPaymentHistory = async () => {
+    const token = localStorage.getItem('dormease_token');
+    if (!token) return;
+
+    try {
+      setPaymentLoading(true);
+      console.log('Fetching payment history...');
+      const [paymentsRes, statsRes] = await Promise.all([
+        fetch('http://localhost:3000/payment-history?limit=100', {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch('http://localhost:3000/payment-history/stats', {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ]);
+
+      if (paymentsRes.ok) {
+        const data = await paymentsRes.json();
+        console.log('Payment history received:', data);
+        setPayments(data.payments || []);
+      } else {
+        console.error('Failed to fetch payments:', paymentsRes.status, await paymentsRes.text());
+      }
+
+      if (statsRes.ok) {
+        const stats = await statsRes.json();
+        console.log('Payment stats received:', stats);
+        setPaymentStats(stats);
+      } else {
+        console.error('Failed to fetch stats:', statsRes.status, await statsRes.text());
+      }
+    } catch (err) {
+      console.error('Error fetching payment history:', err);
+      message.error('Failed to load payment history');
+    } finally {
+      setPaymentLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchPaymentHistory();
+  }, []);
 
   const handleRequestOtp = async () => {
     try {
@@ -220,19 +271,29 @@ const Profile: React.FC = () => {
   }
 
   return (
-    <div style={{ padding: isMobile ? 12 : 24, height: '100%', display: 'flex', flexDirection: 'column', background: '#f5f7fa', overflowX: 'hidden' }}>
-      <div style={{ maxWidth: 1200, margin: '0 auto', flex: 1, overflowY: 'auto', overflowX: 'hidden', width: '100%' }}>
-        <Title level={2} style={{ marginBottom: 24 }}>Account Settings</Title>
+    <div style={{ padding: isMobile ? 12 : 24, height: '100%', background: isDarkMode ? '#0f0f0f' : '#f5f7fa', overflow: 'auto' }}>
+      <div style={{ maxWidth: 1200, margin: '0 auto', width: '100%' }}>
+        <div style={{ marginBottom: 16 }}>
+          <Title level={2} style={{ marginBottom: 4 }}>Account Settings</Title>
+          <Text type="secondary">Manage your profile, security, and payment history</Text>
+        </div>
         
-        <Row gutter={24}>
+        <Row gutter={[24, 24]}>
           {/* Left Sidebar */}
-          <Col xs={24} md={8}>
+          <Col xs={24} lg={7}>
+            {/* User Card */}
             <Card 
-              style={{ borderRadius: 12, marginBottom: 16, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}
+              style={{ 
+                borderRadius: 12, 
+                marginBottom: 16, 
+                boxShadow: isDarkMode ? '0 2px 8px rgba(0,0,0,0.5)' : '0 2px 8px rgba(0,0,0,0.08)',
+                background: isDarkMode ? '#1a1a1a' : '#fff',
+                border: isDarkMode ? '1px solid #2a2a2a' : '1px solid #f0f0f0'
+              }}
               bodyStyle={{ padding: 24, textAlign: 'center' }}
             >
-              <Badge.Ribbon text={user?.platform || 'web'} color="blue">
-                <Avatar size={120} style={{ backgroundColor: '#4f73ff', fontSize: 48, marginBottom: 16 }}>
+              <Badge.Ribbon text={user?.platform || 'web'} color="purple">
+                <Avatar size={100} style={{ backgroundColor: '#7c3aed', fontSize: 42, marginBottom: 16 }}>
                   {avatarLetter}
                 </Avatar>
               </Badge.Ribbon>
@@ -240,7 +301,7 @@ const Profile: React.FC = () => {
                 {user?.fullName || 'User'}
               </Title>
               <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>@{user?.username || 'username'}</Text>
-              <Tag icon={<MailOutlined />} color="blue" style={{ marginBottom: 16 }}>{user?.email || 'email@example.com'}</Tag>
+              <Tag icon={<MailOutlined />} color="blue" style={{ marginBottom: 16 }}>{user?.email || 'email@exam ple.com'}</Tag>
               
               <Divider style={{ margin: '16px 0' }} />
               
@@ -269,241 +330,499 @@ const Profile: React.FC = () => {
               </Button>
             </Card>
 
-            <Card 
-              style={{ borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}
-              title={<Text strong>Navigation</Text>}
-              bodyStyle={{ padding: 0 }}
-            >
-              <List
-                dataSource={menuItems}
-                renderItem={(item: any) => (
-                  <List.Item 
-                    style={{ 
-                      padding: '16px 20px', 
-                      cursor: 'pointer',
-                      background: section === item.key ? '#f0f5ff' : 'transparent',
-                      borderLeft: section === item.key ? '3px solid #4f73ff' : '3px solid transparent',
-                      transition: 'all 0.3s ease'
-                    }} 
-                    onClick={() => setSection(item.key)}
-                  >
-                    <List.Item.Meta
-                      avatar={
-                        <div style={{ 
-                          width: 40, 
-                          height: 40, 
-                          borderRadius: 10, 
-                          background: section === item.key ? '#4f73ff' : '#f0f5ff', 
-                          display: 'flex', 
-                          alignItems: 'center', 
-                          justifyContent: 'center',
-                          color: section === item.key ? '#fff' : '#4f73ff',
-                          fontSize: 18
-                        }}>
-                          {item.icon}
-                        </div>
-                      }
-                      title={<Text strong={section === item.key}>{item.label}</Text>}
-                      description={<Text type="secondary" style={{ fontSize: 12 }}>{item.description}</Text>}
-                    />
-                  </List.Item>
-                )}
-              />
-            </Card>
+            {/* Payment Stats Cards */}
+            <Row gutter={[12, 12]}>
+              <Col xs={12}>
+                <Card 
+                  style={{ 
+                    borderRadius: 12, 
+                    background: isDarkMode ? '#1a1a1a' : '#fff',
+                    border: isDarkMode ? '1px solid #2a2a2a' : '1px solid #f0f0f0',
+                    boxShadow: isDarkMode ? '0 2px 8px rgba(0,0,0,0.5)' : '0 2px 8px rgba(0,0,0,0.08)',
+                  }}
+                  bodyStyle={{ padding: '16px' }}
+                >
+                  <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', fontWeight: 600 }}>Payments</Text>
+                  <div style={{ fontSize: 28, fontWeight: 700, color: '#7c3aed', marginTop: 8 }}>
+                    {paymentStats?.stats?.total_payments || 0}
+                  </div>
+                </Card>
+              </Col>
+              <Col xs={12}>
+                <Card 
+                  style={{ 
+                    borderRadius: 12, 
+                    background: isDarkMode ? '#1a1a1a' : '#fff',
+                    border: isDarkMode ? '1px solid #2a2a2a' : '1px solid #f0f0f0',
+                    boxShadow: isDarkMode ? '0 2px 8px rgba(0,0,0,0.5)' : '0 2px 8px rgba(0,0,0,0.08)',
+                  }}
+                  bodyStyle={{ padding: '16px' }}
+                >
+                  <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', fontWeight: 600 }}>Total Paid</Text>
+                  <div style={{ fontSize: 28, fontWeight: 700, color: '#22c55e', marginTop: 8 }}>
+                    ₱{Math.round((Number(paymentStats?.stats?.total_paid) || 0) / 1000)}k
+                  </div>
+                </Card>
+              </Col>
+            </Row>
           </Col>
 
-          {/* Right Content */}
-          <Col xs={24} md={16}>
-            {/* Personal Information Section */}
-            {section === 'personal' && (
-              <Card 
-                title={
-                  <Space>
-                    <UserOutlined style={{ color: '#4f73ff', fontSize: 20 }} />
-                    <Text strong style={{ fontSize: 18 }}>Personal Information</Text>
-                  </Space>
-                }
-                style={{ borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}
-              >
-                <Descriptions column={1} bordered size="middle">
-                  <Descriptions.Item label="Full Name">
-                    <Text strong>{user?.fullName || '-'}</Text>
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Username">
-                    <Text>{user?.username || '-'}</Text>
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Email Address">
-                    <Space>
-                      <MailOutlined style={{ color: '#4f73ff' }} />
-                      <Text>{user?.email || '-'}</Text>
-                    </Space>
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Platform">
-                    <Tag color="blue">{user?.platform || 'web'}</Tag>
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Account Status">
-                    <Tag icon={<CheckCircleOutlined />} color="success">Active</Tag>
-                  </Descriptions.Item>
-                </Descriptions>
+          {/* Right Content Area */}
+          <Col xs={24} lg={17}>
+            <Card 
+              style={{ 
+                borderRadius: 12, 
+                boxShadow: isDarkMode ? '0 2px 8px rgba(0,0,0,0.5)' : '0 2px 8px rgba(0,0,0,0.08)',
+                background: isDarkMode ? '#1a1a1a' : '#fff',
+                border: isDarkMode ? '1px solid #2a2a2a' : '1px solid #f0f0f0',
+                minHeight: 600,
+              }}
+              bodyStyle={{ padding: 0 }}
+            >
+              <Tabs
+                activeKey={activeTab}
+                onChange={setActiveTab}
+                style={{ padding: '0' }}
+                tabBarStyle={{ 
+                  paddingLeft: 24, 
+                  paddingRight: 24, 
+                  marginBottom: 0,
+                  borderBottom: isDarkMode ? '1px solid #2a2a2a' : '1px solid #f0f0f0'
+                }}
+                items={[
+                  {
+                    key: 'personal',
+                    label: (
+                      <Space>
+                        <UserOutlined />
+                        <span>Personal Info</span>
+                      </Space>
+                    ),
+                    children: (
+                      <div style={{ padding: 24 }}>
+                        <div style={{ marginBottom: 16 }}>
+                          <Title level={4} style={{ marginBottom: 4 }}>Personal Information</Title>
+                          <Text type="secondary">Your account identity & details</Text>
+                        </div>
+                        <Descriptions column={1} bordered size="middle">
+                          <Descriptions.Item label="Full Name">
+                            <Text strong>{user?.fullName || '-'}</Text>
+                          </Descriptions.Item>
+                          <Descriptions.Item label="Username">
+                            <Text>{user?.username || '-'}</Text>
+                          </Descriptions.Item>
+                          <Descriptions.Item label="Email Address">
+                            <Space>
+                              <MailOutlined style={{ color: '#4f73ff' }} />
+                              <Text>{user?.email || '-'}</Text>
+                            </Space>
+                          </Descriptions.Item>
+                          <Descriptions.Item label="Platform">
+                            <Tag color="blue">{user?.platform || 'web'}</Tag>
+                          </Descriptions.Item>
+                          <Descriptions.Item label="Account Status">
+                            <Tag icon={<CheckCircleOutlined />} color="success">Active</Tag>
+                          </Descriptions.Item>
+                        </Descriptions>
+                        <Divider />
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          Last updated: {new Date().toLocaleDateString()}
+                        </Text>
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'security',
+                    label: (
+                      <Space>
+                        <LockOutlined />
+                        <span>Login & Security</span>
+                      </Space>
+                    ),
+                    children: (
+                      <div style={{ padding: 24 }}>
+                        <div style={{ marginBottom: 24 }}>
+                          <Title level={4} style={{ marginBottom: 4 }}>Login & Security</Title>
+                          <Text type="secondary">Protect your account credentials</Text>
+                        </div>
+                        <Row gutter={16}>
+                          <Col xs={24} md={12}>
+                            <Card 
+                              title={
+                                <Space>
+                                  <LockOutlined style={{ color: '#7c3aed' }} />
+                                  <span>Change Password</span>
+                                </Space>
+                              }
+                              style={{
+                                background: isDarkMode ? '#1e1e1e' : '#fafafa',
+                                borderColor: isDarkMode ? '#2a2a2a' : '#d9d9d9'
+                              }}
+                            >
+                              <Form form={passForm} layout="vertical" autoComplete="new-password"onFinish={async (vals) => {
+                                if (!passwordOtpVerified) {
+                                  message.error('Please verify OTP before changing password');
+                                  return;
+                                }
+                                const { currentPassword, newPassword, confirm } = vals;
+                                if (!user) return message.error('No user');
+                                if (!currentPassword || !newPassword) return message.error('Please fill fields');
+                                if (newPassword !== confirm) return message.error('Passwords do not match');
+                                try {
+                                  const loginRes = await fetch('http://localhost:3000/auth/login', {
+                                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ identifier: user.email || user.username, password: currentPassword, platform: user.platform || 'web' })
+                                  });
+                                  if (!loginRes.ok) return message.error('Current password incorrect');
 
-                <Divider />
+                                  const token = localStorage.getItem('dormease_token');
+                                  const patch = await fetch('http://localhost:3000/auth/me', {
+                                    method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                                    body: JSON.stringify({ password: newPassword })
+                                  });
+                                  if (!patch.ok) {
+                                    const err = await patch.json().catch(() => ({}));
+                                    throw new Error(err.message || 'Failed to update password');
+                                  }
+                                  message.success('Password updated');
+                                  passForm.resetFields();
+                                  setPasswordOtpVerified(false);
+                                  handleCloseOtpModal();
+                                } catch (e: any) {
+                                  message.error(e.message || 'Failed to change password');
+                                }
+                              }}>
+                                <Form.Item name="currentPassword" label="Current Password" rules={[{ required: true }]}>
+                                  <Input.Password 
+                                    placeholder="•••••••"
+                                    autoComplete="new-password" 
+                                    data-lpignore="true" 
+                                    data-1p-ignore="true"
+                                    data-form-type="other"
+                                    name="prevent-autofill-current"
+                                  />
+                                </Form.Item>
+                                <Form.Item name="newPassword" label="New Password" rules={[{ required: true, min: 6, message: 'Min. 6 characters' }]}>
+                                  <Input.Password 
+                                    placeholder="Min. 6 characters"
+                                    autoComplete="new-password" 
+                                    data-lpignore="true" 
+                                    data-1p-ignore="true"
+                                    data-form-type="other"
+                                    name="prevent-autofill-new"
+                                  />
+                                </Form.Item>
+                                <Form.Item name="confirm" label="Confirm Password" dependencies={["newPassword"]} rules={[{ required: true }, ({ getFieldValue }) => ({ validator(_, value) { if (!value || getFieldValue('newPassword') === value) return Promise.resolve(); return Promise.reject(new Error('Passwords do not match')); } })]}>
+                                  <Input.Password 
+                                    placeholder="•••••••"
+                                    autoComplete="new-password" 
+                                    data-lpignore="true" 
+                                    data-1p-ignore="true"
+                                    data-form-type="other"
+                                    name="prevent-autofill-confirm"
+                                  />
+                                </Form.Item>
+                                <Button 
+                                  type="primary" 
+                                  onClick={handlePasswordChangeClick}
+                                  block
+                                >
+                                  Update Password
+                                </Button>
+                              </Form>
+                            </Card>
+                          </Col>
+                          <Col xs={24} md={12}>
+                            <Card 
+                              title={
+                                <Space>
+                                  <MailOutlined style={{ color: '#7c3aed' }} />
+                                  <span>Change Email</span>
+                                </Space>
+                              }
+                              style={{
+                                background: isDarkMode ? '#1e1e1e' : '#fafafa',
+                                borderColor: isDarkMode ? '#2a2a2a' : '#d9d9d9'
+                              }}
+                            >
+                              <Form form={emailForm} layout="vertical" autoComplete="off" data-form-type="other" onFinish={async (vals) => {
+                                if (!emailOtpVerified) {
+                                  message.error('Please verify OTP before changing email');
+                                  return;
+                                }
+                                const { email, password } = vals;
+                                if (!user) return message.error('No user');
+                                if (!email || !password) return message.error('Please fill fields');
+                                try {
+                                  const loginRes = await fetch('http://localhost:3000/auth/login', {
+                                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ identifier: user.email || user.username, password, platform: user.platform || 'web' })
+                                  });
+                                  if (!loginRes.ok) return message.error('Password incorrect');
 
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  Last updated: {new Date().toLocaleDateString()}
-                </Text>
-              </Card>
-            )}
+                                  const token = localStorage.getItem('dormease_token');
+                                  const patch = await fetch('http://localhost:3000/auth/me', {
+                                    method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                                    body: JSON.stringify({ email })
+                                  });
+                                  if (!patch.ok) {
+                                    const err = await patch.json().catch(() => ({}));
+                                    throw new Error(err.message || 'Failed to update email');
+                                  }
+                                  const data = await patch.json();
+                                  setUser(data.user || null);
+                                  message.success('Email updated');
+                                  emailForm.resetFields();
+                                  setEmailOtpVerified(false);
+                                  handleCloseOtpModal();
+                                } catch (e: any) {
+                                  message.error(e.message || 'Failed to update email');
+                                }
+                              }}>
+                                <Form.Item name="email" label="New Email Address" rules={[{ required: true, type: 'email' }]}>
+                                  <Input 
+                                    placeholder="new@example.com"
+                                    type="text" 
+                                    autoComplete="off" 
+                                    data-lpignore="true" 
+                                    data-1p-ignore="true"
+                                    data-form-type="other"
+                                    name="prevent-autofill-email"
+                                    prefix={<MailOutlined />}
+                                  />
+                                </Form.Item>
+                                <Form.Item name="password" label="Current Password" rules={[{ required: true }]}>
+                                  <Input.Password 
+                                    placeholder="Verify identity"
+                                    autoComplete="new-password" 
+                                    data-lpignore="true" 
+                                    data-1p-ignore="true"
+                                    data-form-type="other"
+                                    name="prevent-autofill-pwd"
+                                  />
+                                </Form.Item>
+                                <Alert
+                                  message="An OTP will be sent to your current email to verify this change."
+                                  type="info"
+                                  icon={<InfoCircleOutlined />}
+                                  showIcon
+                                  style={{ marginBottom: 16, fontSize: 12 }}
+                                />
+                                <Button 
+                                  type="primary" 
+                                  onClick={handleEmailChangeClick}
+                                  block
+                                >
+                                  Update Email
+                                </Button>
+                              </Form>
+                            </Card>
+                          </Col>
+                        </Row>
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'payments',
+                    label: (
+                      <Space>
+                        <CreditCardOutlined />
+                        <span>Payments</span>
+                      </Space>
+                    ),
+                    children: (
+                      <div style={{ padding: 24 }}>
+                        <div style={{ marginBottom: 24 }}>
+                          <Title level={4} style={{ marginBottom: 4 }}>Payment History</Title>
+                          <Text type="secondary">All transactions on your account</Text>
+                        </div>
 
-            {/* Security Section */}
-            {section === 'security' && (
-              <Card 
-                title={
-                  <Space>
-                    <SafetyOutlined style={{ color: '#4f73ff', fontSize: 20 }} />
-                    <Text strong style={{ fontSize: 18 }}>Login & Security</Text>
-                  </Space>
-                }
-                style={{ borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}
-              >
-              <Row gutter={16}>
-                <Col xs={24} md={12}>
-                  <Card type="inner" title="Change password">
-                    <Form form={passForm} layout="vertical" autoComplete="off" onFinish={async (vals) => {
-                      if (!passwordOtpVerified) {
-                        message.error('Please verify OTP before changing password');
-                        return;
-                      }
-                      const { currentPassword, newPassword, confirm } = vals;
-                      if (!user) return message.error('No user');
-                      if (!currentPassword || !newPassword) return message.error('Please fill fields');
-                      if (newPassword !== confirm) return message.error('Passwords do not match');
-                      try {
-                        // verify current password by attempting login
-                        const loginRes = await fetch('http://localhost:3000/auth/login', {
-                          method: 'POST', headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ identifier: user.email || user.username, password: currentPassword, platform: user.platform || 'web' })
-                        });
-                        if (!loginRes.ok) return message.error('Current password incorrect');
+                        {/* Payment Stats */}
+                        {paymentStats && (
+                          <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+                            <Col xs={12} sm={6}>
+                              <Card 
+                                style={{ 
+                                  background: isDarkMode ? '#1e1e1e' : '#f8fbff',
+                                  border: 'none',
+                                  borderRadius: 8,
+                                  borderTop: '3px solid #7c3aed'
+                                }}
+                                bodyStyle={{ padding: '16px', textAlign: 'center' }}
+                              >
+                                <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', fontWeight: 600 }}>Total</Text>
+                                <div style={{ fontSize: 24, fontWeight: 700, color: '#7c3aed', marginTop: 8 }}>
+                                  {paymentStats.stats?.total_payments || 0}
+                                </div>
+                              </Card>
+                            </Col>
+                            <Col xs={12} sm={6}>
+                              <Card 
+                                style={{ 
+                                  background: isDarkMode ? '#1e1e1e' : '#f0fff4',
+                                  border: 'none',
+                                  borderRadius: 8,
+                                  borderTop: '3px solid #22c55e'
+                                }}
+                                bodyStyle={{ padding: '16px', textAlign: 'center' }}
+                              >
+                                <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', fontWeight: 600 }}>Total Paid</Text>
+                                <div style={{ fontSize: 24, fontWeight: 700, color: '#22c55e', marginTop: 8 }}>
+                                  ₱{Math.round((Number(paymentStats.stats?.total_paid) || 0) / 1000)}k
+                                </div>
+                              </Card>
+                            </Col>
+                            <Col xs={12} sm={6}>
+                              <Card 
+                                style={{ 
+                                  background: isDarkMode ? '#1e1e1e' : '#fef3f2',
+                                  border: 'none',
+                                  borderRadius: 8,
+                                  borderTop: '3px solid #ef4444'
+                                }}
+                                bodyStyle={{ padding: '16px', textAlign: 'center' }}
+                              >
+                                <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', fontWeight: 600 }}>Pending</Text>
+                                <div style={{ fontSize: 24, fontWeight: 700, color: '#ef4444', marginTop: 8 }}>
+                                  ₱{((Number(paymentStats.stats?.total_pending) || 0) / 1000).toFixed(1)}k
+                                </div>
+                              </Card>
+                            </Col>
+                            <Col xs={12} sm={6}>
+                              <Card 
+                                style={{ 
+                                  background: isDarkMode ? '#1e1e1e' : '#fffbf5',
+                                  border: 'none',
+                                  borderRadius: 8,
+                                  borderTop: '3px solid #fb923c'
+                                }}
+                                bodyStyle={{ padding: '16px', textAlign: 'center' }}
+                              >
+                                <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', fontWeight: 600 }}>Average</Text>
+                                <div style={{ fontSize: 24, fontWeight: 700, color: '#fb923c', marginTop: 8 }}>
+                                  ₱{Math.round((Number(paymentStats.stats?.avg_payment) || 0) / 1000)}k
+                                </div>
+                              </Card>
+                            </Col>
+                          </Row>
+                        )}
 
-                        const token = localStorage.getItem('dormease_token');
-                        const patch = await fetch('http://localhost:3000/auth/me', {
-                          method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                          body: JSON.stringify({ password: newPassword })
-                        });
-                        if (!patch.ok) {
-                          const err = await patch.json().catch(() => ({}));
-                          throw new Error(err.message || 'Failed to update password');
-                        }
-                        message.success('Password updated');
-                        passForm.resetFields();
-                        setPasswordOtpVerified(false);
-                        handleCloseOtpModal();
-                      } catch (e: any) {
-                        message.error(e.message || 'Failed to change password');
-                      }
-                    }}>
-                      <Form.Item name="currentPassword" label="Current password" rules={[{ required: true }]}>
-                        <Input.Password 
-                          autoComplete="off" 
-                          data-lpignore="true" 
-                          data-1p-ignore="true"
-                          onFocus={(e) => { e.target.value = ''; }}
-                        />
-                      </Form.Item>
-                      <Form.Item name="newPassword" label="New password" rules={[{ required: true, min: 6 }]}>
-                        <Input.Password 
-                          autoComplete="off" 
-                          data-lpignore="true" 
-                          data-1p-ignore="true"
-                        />
-                      </Form.Item>
-                      <Form.Item name="confirm" label="Confirm new password" dependencies={["newPassword"]} rules={[{ required: true, message: 'Please confirm' }, ({ getFieldValue }) => ({ validator(_, value) { if (!value || getFieldValue('newPassword') === value) return Promise.resolve(); return Promise.reject(new Error('Passwords do not match')); } })]}>
-                        <Input.Password 
-                          autoComplete="off" 
-                          data-lpignore="true" 
-                          data-1p-ignore="true"
-                        />
-                      </Form.Item>
-                      <Form.Item>
-                        <Button 
-                          type="primary" 
-                          onClick={handlePasswordChangeClick}
-                        >
-                          Change password
-                        </Button>
-                      </Form.Item>
-                    </Form>
-                  </Card>
-                </Col>
-                <Col xs={24} md={12}>
-                  <Card type="inner" title="Change email">
-                    <Form form={emailForm} layout="vertical" autoComplete="off" onFinish={async (vals) => {
-                      if (!emailOtpVerified) {
-                        message.error('Please verify OTP before changing email');
-                        return;
-                      }
-                      const { email, password } = vals;
-                      if (!user) return message.error('No user');
-                      if (!email || !password) return message.error('Please fill fields');
-                      try {
-                        // verify password
-                        const loginRes = await fetch('http://localhost:3000/auth/login', {
-                          method: 'POST', headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ identifier: user.email || user.username, password, platform: user.platform || 'web' })
-                        });
-                        if (!loginRes.ok) return message.error('Password incorrect');
+                        {/* Search Input */}
+                        {!paymentLoading && payments.length > 0 && (
+                          <div style={{ marginBottom: 16 }}>
+                            <Input
+                              placeholder="Search by tenant, dorm, amount, type, or status..."
+                              prefix={<SearchOutlined style={{ color: isDarkMode ? '#9ca3af' : '#8c8c8c' }} />}
+                              value={searchQuery}
+                              onChange={(e) => setSearchQuery(e.target.value)}
+                              allowClear
+                              size="large"
+                              style={{
+                                borderRadius: 8,
+                                background: isDarkMode ? '#1e1e1e' : '#fff',
+                                borderColor: isDarkMode ? '#3a3a3a' : '#d9d9d9'
+                              }}
+                            />
+                          </div>
+                        )}
 
-                        const token = localStorage.getItem('dormease_token');
-                        const patch = await fetch('http://localhost:3000/auth/me', {
-                          method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                          body: JSON.stringify({ email })
-                        });
-                        if (!patch.ok) {
-                          const err = await patch.json().catch(() => ({}));
-                          throw new Error(err.message || 'Failed to update email');
-                        }
-                        const data = await patch.json();
-                        setUser(data.user || null);
-                        message.success('Email updated');
-                        emailForm.resetFields();
-                        setEmailOtpVerified(false);
-                        handleCloseOtpModal();
-                      } catch (e: any) {
-                        message.error(e.message || 'Failed to update email');
-                      }
-                    }}>
-                      <Form.Item name="email" label="New email" rules={[{ required: true, type: 'email' }]}>
-                        <Input 
-                          type="email" 
-                          autoComplete="off" 
-                          data-lpignore="true" 
-                          data-1p-ignore="true"
-                          spellCheck="false" 
-                          onFocus={(e) => { e.currentTarget.value = ''; }}
-                        />
-                      </Form.Item>
-                      <Form.Item name="password" label="Current password" rules={[{ required: true }]}>
-                        <Input.Password 
-                          autoComplete="off" 
-                          data-lpignore="true" 
-                          data-1p-ignore="true"
-                          onFocus={(e) => { e.target.value = ''; }}
-                        />
-                      </Form.Item>
-                      <Form.Item>
-                        <Button 
-                          type="primary" 
-                          onClick={handleEmailChangeClick}
-                        >
-                          Change email
-                        </Button>
-                      </Form.Item>
-                    </Form>
-                  </Card>
-                </Col>
-              </Row>
-              </Card>
-            )}
+                        {/* Payment Table */}
+                        {paymentLoading ? (
+                          <div style={{ textAlign: 'center', padding: 40 }}>
+                            <Spin size="large" />
+                          </div>
+                        ) : payments.length === 0 ? (
+                          <div style={{ textAlign: 'center', padding: 60 }}>
+                            <DollarOutlined style={{ fontSize: 64, color: isDarkMode ? '#4b5563' : '#d9d9d9', marginBottom: 16 }} />
+                            <div>
+                              <Text type="secondary" style={{ fontSize: 16 }}>No payment history yet</Text>
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ overflowX: 'auto' }}>
+                            <Table
+                              dataSource={payments.filter((payment) => {
+                                if (!searchQuery) return true;
+                                const query = searchQuery.toLowerCase();
+                                return (
+                                  payment.tenant_name?.toLowerCase().includes(query) ||
+                                  payment.dorm_name?.toLowerCase().includes(query) ||
+                                  payment.amount?.toString().includes(query) ||
+                                  payment.payment_source?.toLowerCase().includes(query) ||
+                                  payment.status?.toLowerCase().includes(query) ||
+                                  payment.payment_number?.toString().includes(query)
+                                );
+                              })}
+                              pagination={{ pageSize: 10, showSizeChanger: false }}
+                              size="middle"
+                              columns={[
+                                {
+                                  title: 'Tenant',
+                                  dataIndex: 'tenant_name',
+                                  key: 'tenant_name',
+                                  render: (text) => <Text strong>{text}</Text>,
+                                  sorter: (a, b) => a.tenant_name.localeCompare(b.tenant_name),
+                                },
+                                {
+                                  title: 'Dorm',
+                                  dataIndex: 'dorm_name',
+                                  key: 'dorm_name',
+                                },
+                                {
+                                  title: 'Amount',
+                                  dataIndex: 'amount',
+                                  key: 'amount',
+                                  render: (amount) => (
+                                    <Text strong style={{ color: '#7c3aed' }}>
+                                      ₱{Number(amount).toLocaleString()}
+                                    </Text>
+                                  ),
+                                  sorter: (a, b) => Number(a.amount) - Number(b.amount),
+                                },
+                                {
+                                  title: 'Type',
+                                  dataIndex: 'payment_source',
+                                  key: 'payment_source',
+                                  render: (source) => {
+                                    const colors: Record<string, string> = { monthly: 'blue', advance: 'purple', deposit: 'orange' };
+                                    return <Tag color={colors[source] || 'default'}>{source}</Tag>;
+                                  },
+                                },
+                                {
+                                  title: 'Status',
+                                  dataIndex: 'status',
+                                  key: 'status',
+                                  render: (status) => {
+                                    const colors: Record<string, string> = { paid: 'green', pending: 'orange', overdue: 'red' };
+                                    return <Tag color={colors[status] || 'default'}>{status}</Tag>;
+                                  },
+                                },
+                                {
+                                  title: 'Date',
+                                  dataIndex: 'payment_date',
+                                  key: 'payment_date',
+                                  render: (date) => (
+                                    <Text type="secondary">
+                                      {new Date(date).toLocaleDateString('en-US', { 
+                                        year: 'numeric', 
+                                        month: 'short', 
+                                        day: 'numeric' 
+                                      })}
+                                    </Text>
+                                  ),
+                                  sorter: (a, b) => new Date(a.payment_date).getTime() - new Date(b.payment_date).getTime(),
+                                },
+                              ]}
+                              rowKey="id"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    ),
+                  },
+                ]}
+              />
+            </Card>
           </Col>
         </Row>
 

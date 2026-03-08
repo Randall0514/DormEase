@@ -65,6 +65,7 @@ const Messages: React.FC<Props> = ({
   const screens = useBreakpoint();
   const isMobile = !screens.md;
   const { sendMessage, onNewMessage, offNewMessage, isConnected } = useWebSocket();
+  const isDarkMode = document.body.classList.contains('dark-mode');
 
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
@@ -479,9 +480,9 @@ const Messages: React.FC<Props> = ({
                 minWidth: 0,
                 minHeight: 0,
                 overflow: 'hidden',
-                background: '#f7f8fa',
+                background: isDarkMode ? '#1a1a1a' : '#f7f8fa',
                 borderRadius: 10,
-                border: '1px solid #eceff3',
+                border: isDarkMode ? '1px solid #2a2a2a' : '1px solid #eceff3',
                 padding: 10,
               }}
             >
@@ -506,17 +507,20 @@ const Messages: React.FC<Props> = ({
                       onClick={() => openConversation(conversation.userId)}
                       style={{
                         cursor: 'pointer',
-                        border: '1px solid #dde2ea',
+                        border: isDarkMode ? '1px solid #2a2a2a' : '1px solid #dde2ea',
                         borderRadius: 12,
                         marginBottom: 8,
                         padding: '12px',
-                        background: selectedConversationId === conversation.userId ? '#e9f2ff' : '#ffffff',
+                        background: selectedConversationId === conversation.userId 
+                          ? (isDarkMode ? 'rgba(124, 58, 237, 0.2)' : '#e9f2ff')
+                          : (isDarkMode ? '#1e1e1e' : '#ffffff'),
                         display: 'flex',
                         alignItems: 'flex-start',
                         gap: 12,
+                        transition: 'all 0.2s ease',
                       }}
                     >
-                      <Avatar size={46} style={{ background: '#e7e7e7', color: '#000', fontWeight: 700, flexShrink: 0 }}>
+                      <Avatar size={46} style={{ background: isDarkMode ? '#3a3a3a' : '#e7e7e7', color: isDarkMode ? '#f3f4f6' : '#000', fontWeight: 700, flexShrink: 0 }}>
                         {getAvatarLabel(conversation.userName)}
                       </Avatar>
                       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -582,8 +586,8 @@ const Messages: React.FC<Props> = ({
                 overflow: 'hidden',
                 border: 'none',
                 borderRadius: 12,
-                background: '#fff',
-                boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                background: isDarkMode ? '#1a1a1a' : '#fff',
+                boxShadow: isDarkMode ? '0 2px 8px rgba(0,0,0,0.4)' : '0 2px 8px rgba(0,0,0,0.1)',
               }}
             >
               {!selectedConversation ? (
@@ -599,7 +603,7 @@ const Messages: React.FC<Props> = ({
                       gap: 12,
                       padding: '14px 16px',
                       borderBottom: 'none',
-                      background: '#2C3E50',
+                      background: isDarkMode ? '#1e1e1e' : '#2C3E50',
                       color: '#fff',
                     }}
                   >
@@ -612,7 +616,7 @@ const Messages: React.FC<Props> = ({
                       />
                     ) : null}
                     <div style={{ position: 'relative' }}>
-                      <Avatar size={44} style={{ background: '#4e73ff', color: '#fff', fontWeight: 700, fontSize: 18 }}>
+                      <Avatar size={44} style={{ background: isDarkMode ? '#7c3aed' : '#4e73ff', color: '#fff', fontWeight: 700, fontSize: 18 }}>
                         {getAvatarLabel(selectedConversation.userName)}
                       </Avatar>
                       {isConnected && (
@@ -625,7 +629,7 @@ const Messages: React.FC<Props> = ({
                             height: 14,
                             borderRadius: '50%',
                             background: '#52c41a',
-                            border: '2px solid #2C3E50',
+                            border: isDarkMode ? '2px solid #1e1e1e' : '2px solid #2C3E50',
                           }}
                         />
                       )}
@@ -686,7 +690,7 @@ const Messages: React.FC<Props> = ({
                       display: 'flex',
                       flexDirection: 'column',
                       gap: 16,
-                      background: '#E9ECEF',
+                      background: isDarkMode ? '#0f0f0f' : '#E9ECEF',
                     }}
                   >
                     {loadingHistoryByUser[selectedConversation.userId] ? (
@@ -725,7 +729,7 @@ const Messages: React.FC<Props> = ({
                               }}
                             >
                               {!item.isMine && (
-                                <Avatar size={32} style={{ background: '#4e73ff', color: '#fff', fontWeight: 700, flexShrink: 0 }}>
+                                <Avatar size={32} style={{ background: isDarkMode ? '#3a3a3a' : '#4e73ff', color: isDarkMode ? '#f3f4f6' : '#fff', fontWeight: 700, flexShrink: 0 }}>
                                   {getAvatarLabel(selectedConversation.userName)}
                                 </Avatar>
                               )}
@@ -734,11 +738,14 @@ const Messages: React.FC<Props> = ({
                                   style={{
                                     padding: '10px 14px',
                                     borderRadius: item.isMine ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
-                                    background: item.isMine ? '#1890ff' : '#ffffff',
+                                    background: item.isMine 
+                                      ? (isDarkMode ? '#7c3aed' : '#1890ff')
+                                      : (isDarkMode ? '#2a2a2a' : '#ffffff'),
                                     boxShadow: '0 1px 2px rgba(0, 0, 0, 0.1)',
+                                    border: !item.isMine && !isDarkMode ? '1px solid #f0f0f0' : 'none',
                                   }}
                                 >
-                                  <Text style={{ color: item.isMine ? '#fff' : '#000', fontSize: 14, lineHeight: 1.5 }}>{item.text}</Text>
+                                  <Text style={{ color: item.isMine ? '#fff' : (isDarkMode ? '#e5e7eb' : '#000'), fontSize: 14, lineHeight: 1.5 }}>{item.text}</Text>
                                 </div>
                                 <Text style={{ fontSize: 11, color: '#999', marginTop: 4, marginLeft: item.isMine ? 0 : 8, marginRight: item.isMine ? 8 : 0 }}>
                                   {formatTime(item.timestamp)}
@@ -752,7 +759,7 @@ const Messages: React.FC<Props> = ({
                     <div ref={messagesEndRef} />
                   </div>
 
-                  <div style={{ padding: '12px 16px', background: '#fff', borderTop: '1px solid #e0e0e0', display: 'flex', gap: 12, alignItems: 'center' }}>
+                  <div style={{ padding: '12px 16px', background: isDarkMode ? '#1a1a1a' : '#fff', borderTop: isDarkMode ? '1px solid #2a2a2a' : '1px solid #e0e0e0', display: 'flex', gap: 12, alignItems: 'center' }}>
                     <Input
                       value={draftMessage}
                       onChange={(event) => setDraftMessage(event.target.value)}
@@ -763,8 +770,8 @@ const Messages: React.FC<Props> = ({
                         flex: 1,
                         borderRadius: 20,
                         padding: '8px 16px',
-                        background: '#F8F9FA',
-                        border: 'none',
+                        background: isDarkMode ? '#1e1e1e' : '#F8F9FA',
+                        border: isDarkMode ? '1px solid #3a3a3a' : 'none',
                       }}
                     />
                     <Button

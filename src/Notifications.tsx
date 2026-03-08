@@ -68,6 +68,7 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
   const screens = useBreakpoint();
   const isMobile = !screens.md;
   const { onNotification, offNotification } = useWebSocket();
+  const isDarkMode = document.body.classList.contains('dark-mode');
 
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [loading, setLoading] = useState(true);

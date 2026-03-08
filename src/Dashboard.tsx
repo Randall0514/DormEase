@@ -59,6 +59,16 @@ interface DormData {
   photo_urls?: string[] | null;
 }
 
+interface PaymentReceipt {
+  paymentNumber: number;
+  paymentSource: 'monthly' | 'advance' | 'deposit';
+  tenantName: string;
+  dormitory: string;
+  amountPaid: number;
+  paymentDate: string;
+  nextPaymentDueDate: string | null;
+}
+
 interface Reservation {
   id: number;
   dorm_name: string;
@@ -85,6 +95,8 @@ interface Reservation {
   payments_paid?: number; // Number of payments marked as paid
   advance_used?: boolean; // Whether advance has been used for payment
   deposit_used?: boolean; // Whether deposit has been used for payment
+  tenant_email?: string | null;
+  receipt_history?: PaymentReceipt[] | null;
 }
 
 interface DashboardProps {
@@ -99,6 +111,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
   const screens = useBreakpoint();
   const isMobile = !screens.md;
   const { onNewMessage, offNewMessage } = useWebSocket();
+  const isDarkMode = document.body.classList.contains('dark-mode');
 
   const [collapsed, setCollapsed] = useState(false);
   const [activeSection, setActiveSection] = useState<SectionKey>('home');
@@ -180,6 +193,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
     return new Date(dateStr);
   };
 
+  const parseReceiptDate = (dateStr?: string | null): Date | null => {
+    if (!dateStr) return null;
+    const parsed = new Date(dateStr);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+
+  const getReceiptForPayment = (tenant: Reservation, paymentNumber: number): PaymentReceipt | undefined => {
+    const history = tenant.receipt_history || [];
+    return history.find((receipt) => Number(receipt?.paymentNumber) === paymentNumber);
+  };
+
   const escapeHtml = (value: string) =>
     value
       .replace(/&/g, '&amp;')
@@ -188,12 +212,26 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
 
-  const printPaymentReceipt = (tenant: Reservation, paymentNumber: number, paymentDate: Date) => {
+  const printPaymentReceipt = (
+    tenant: Reservation,
+    paymentNumber: number,
+    paymentDate: Date,
+    receipt?: PaymentReceipt
+  ) => {
     const receiptWindow = window.open('', '_blank', 'width=820,height=920');
     if (!receiptWindow) {
       message.error('Please allow popups to print the receipt.');
       return;
     }
+
+    const receiptPaymentDate = parseReceiptDate(receipt?.paymentDate) || paymentDate;
+    const nextDueDate = parseReceiptDate(receipt?.nextPaymentDueDate);
+    const paymentSourceLabel =
+      receipt?.paymentSource === 'advance'
+        ? 'Advance'
+        : receipt?.paymentSource === 'deposit'
+          ? 'Deposit'
+          : 'Monthly';
 
     const issuedAt = new Date().toLocaleString('en-US', {
       year: 'numeric',
@@ -202,17 +240,25 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
       hour: '2-digit',
       minute: '2-digit',
     });
-    const dueDate = paymentDate.toLocaleDateString('en-US', {
+    const paymentDateText = receiptPaymentDate.toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'long',
       day: 'numeric',
     });
+    const nextDueDateText = nextDueDate
+      ? nextDueDate.toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        })
+      : 'No remaining due date';
 
     const dormName = dorm?.dorm_name || tenant.dorm_name || 'N/A';
     const dormAddress = dorm?.address || tenant.location || 'N/A';
     const contactNumber = dorm?.phone ? `+63${dorm.phone}` : 'N/A';
     const emailAddress = dorm?.email || 'N/A';
     const ownerPrintedName = dorm?.dorm_name ? `${dorm.dorm_name} Owner` : 'Dorm Owner';
+    const amountPaid = Number(receipt?.amountPaid ?? tenant.price_per_month ?? 0);
 
     const html = `
       <!DOCTYPE html>
@@ -285,15 +331,19 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
               </div>
               <div class="field">
                 <div class="label">Payment</div>
-                <div class="value">Payment #${paymentNumber} (Paid)</div>
+                <div class="value">Payment #${paymentNumber} (Paid via ${escapeHtml(paymentSourceLabel)})</div>
               </div>
               <div class="field">
-                <div class="label">Due Date</div>
-                <div class="value">${escapeHtml(dueDate)}</div>
+                <div class="label">Payment Date</div>
+                <div class="value">${escapeHtml(paymentDateText)}</div>
+              </div>
+              <div class="field">
+                <div class="label">Next Payment Due Date</div>
+                <div class="value">${escapeHtml(nextDueDateText)}</div>
               </div>
               <div class="field">
                 <div class="label">Amount</div>
-                <div class="value">₱${Number(tenant.price_per_month).toLocaleString()}</div>
+                <div class="value">₱${amountPaid.toLocaleString()}</div>
               </div>
             </div>
 
@@ -480,12 +530,54 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
         body: JSON.stringify({ paymentNumber, paymentSource }),
       });
 
+      const payload = await res.json().catch(() => ({}));
+
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.message || 'Failed to mark as paid');
+        throw new Error(payload?.message || 'Failed to mark as paid');
       }
 
-      message.success(`Payment #${paymentNumber} marked as paid!`);
+      const emailSent = Boolean(payload?.emailSent);
+      const emailMessage = String(payload?.emailMessage || '');
+      const receipt = payload?.receipt as PaymentReceipt | undefined;
+
+      // Record payment to payment_history
+      const sourceType = paymentSource || 'monthly';
+      const amount = paymentSource === 'advance' ? Number(tenant.advance) : paymentSource === 'deposit' ? Number(tenant.deposit) : Number(tenant.price_per_month);
+      
+      try {
+        await fetch(`${API_BASE}/payment-history`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            tenant_id: tenant.id,
+            reservation_id: tenant.id,
+            tenant_name: tenant.full_name,
+            dorm_name: tenant.dorm_name || dorm?.dorm_name || 'Unknown Dorm',
+            amount: amount,
+            payment_source: sourceType,
+            payment_number: paymentNumber,
+            status: 'paid',
+          }),
+        });
+      } catch (recordErr) {
+        console.error('Failed to record payment to history:', recordErr);
+      }
+
+      if (emailSent) {
+        message.success(`Payment #${paymentNumber} marked as paid. Confirmation email sent to tenant.`);
+      } else if (emailMessage) {
+        message.warning(`Payment #${paymentNumber} marked as paid. ${emailMessage}`);
+      } else {
+        message.success(`Payment #${paymentNumber} marked as paid!`);
+      }
+
+      if (receipt) {
+        message.info(`Receipt #${receipt.paymentNumber} added to dashboard receipts.`);
+      }
+
       fetchNotifications();
     } catch (err: any) {
       message.error(err.message || 'Failed to mark payment as paid');
@@ -878,7 +970,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
           })}
         </Row>
 
-        <div style={{ marginTop: 24, padding: 16, background: '#ffffff', borderRadius: 8 }}>
+        <div style={{ marginTop: 24, padding: 16, background: isDarkMode ? '#1a1a1a' : '#ffffff', borderRadius: 8, border: isDarkMode ? '1px solid #2a2a2a' : 'none' }}>
           <Text style={{ fontWeight: 600, marginBottom: 16, display: 'block' }}>Utilities Included</Text>
           <Form.Item name="utilities" style={{ marginBottom: 0 }}>
             <Checkbox.Group
@@ -921,7 +1013,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
 
         return (
           <div>
-            <div style={{ background: '#e8f4fc', borderRadius: 16, padding: isMobile ? 14 : 24, marginBottom: 24 }}>
+            <div style={{ background: isDarkMode ? '#1e1e1e' : '#e8f4fc', borderRadius: 16, padding: isMobile ? 14 : 24, marginBottom: 24, border: isDarkMode ? '1px solid #2a2a2a' : 'none' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', flexWrap: isMobile ? 'wrap' : 'nowrap', gap: 12, marginBottom: 16 }}>
                 <Title level={3} style={{ margin: 0, fontWeight: 700 }}>{dorm.dorm_name.toUpperCase()}</Title>
                 <div>
@@ -982,7 +1074,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
 
               <Title level={5} style={{ marginBottom: 16, fontWeight: 700, marginTop: 24 }}>Upcoming Payments</Title>
               {acceptedTenants.length === 0 ? (
-                <div style={{ background: '#f8fbff', padding: 32, borderRadius: 12, textAlign: 'center', border: '1px solid #e8f4fc' }}>
+                <div style={{ background: isDarkMode ? '#1a1a1a' : '#f8fbff', padding: 32, borderRadius: 12, textAlign: 'center', border: isDarkMode ? '1px solid #2a2a2a' : '1px solid #e8f4fc' }}>
                   <Text type="secondary">No tenants yet.</Text>
                 </div>
               ) : (
@@ -1029,7 +1121,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
                         style={{ 
                           borderRadius: 12, 
                           border: isDueSoon ? '2px solid #ff4d4f' : '1px solid #e8f4fc', 
-                          background: isDueSoon ? '#fff1f0' : '#f8fbff',
+                          background: isDueSoon 
+                            ? (isDarkMode ? 'rgba(220, 38, 38, 0.15)' : '#fff1f0')
+                            : (isDarkMode ? '#1e1e1e' : '#f8fbff'),
                           boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
                           overflow: 'hidden',
                         }}
@@ -1089,7 +1183,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
 
                         {(tenant.advance > 0 || tenant.deposit > 0) && (
                           <div style={{ 
-                            background: '#fafbfc', 
+                            background: isDarkMode ? '#1e1e1e' : '#fafbfc', 
                             padding: '12px 16px', 
                             borderRadius: 8, 
                             marginBottom: 16,
@@ -1207,7 +1301,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
                             </div>
                           </div>
                         )}
-                        
+
                         {paymentSchedule.length > 0 && (
                           <div
                             onMouseEnter={() => setHoveredTenantId(tenant.id)}
@@ -1246,7 +1340,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
                                           key={idx}
                                           style={{ 
                                             padding: '12px 16px', 
-                                            background: isPaid ? '#f6ffed' : isDueSoon && isNext ? '#fff1f0' : '#ffffff',
+                                            background: isPaid 
+                                              ? (isDarkMode ? 'rgba(34, 197, 94, 0.15)' : '#f6ffed')
+                                              : isDueSoon && isNext 
+                                                ? (isDarkMode ? 'rgba(220, 38, 38, 0.15)' : '#fff1f0')
+                                                : (isDarkMode ? '#1a1a1a' : '#ffffff'),
                                             border: isPaid ? '1px solid #52c41a' : isDueSoon && isNext ? '1px solid #ff4d4f' : '1px solid #e8e8e8',
                                             borderRadius: 8,
                                             display: 'flex',
@@ -1275,7 +1373,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
                                             {isPaid && (
                                               <Button
                                                 size="small"
-                                                onClick={() => printPaymentReceipt(tenant, payment.monthNumber, payment.date)}
+                                                onClick={() => printPaymentReceipt(
+                                                  tenant,
+                                                  payment.monthNumber,
+                                                  payment.date,
+                                                  getReceiptForPayment(tenant, payment.monthNumber)
+                                                )}
                                               >
                                                 Print Receipt
                                               </Button>
@@ -1351,7 +1454,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
       )}
 
       <Layout style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
-        <Header style={{ background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: isMobile ? 'wrap' : 'nowrap', rowGap: 8, paddingInline: isMobile ? 12 : 24, paddingTop: isMobile ? 8 : 0, paddingBottom: isMobile ? 8 : 0, boxShadow: '0 2px 8px rgba(0, 0, 0, 0.06)' }}>
+        <Header style={{ background: isDarkMode ? '#1a1a1a' : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: isMobile ? 'wrap' : 'nowrap', rowGap: 8, paddingInline: isMobile ? 12 : 24, paddingTop: isMobile ? 8 : 0, paddingBottom: isMobile ? 8 : 0, boxShadow: isDarkMode ? '0 2px 8px rgba(0, 0, 0, 0.3)' : '0 2px 8px rgba(0, 0, 0, 0.06)', borderBottom: isDarkMode ? '1px solid #2a2a2a' : 'none' }}>
           <Space size={16} style={{ display: 'flex', alignItems: 'center' }}>
             {isMobile && (
               <Button
@@ -1370,7 +1473,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
               onOpenChange={setNotificationDropdownOpen}
               trigger={isMobile ? ['click'] : ['hover']}
               dropdownRender={() => (
-                <div style={{ background: '#fff', borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', width: isMobile ? '92vw' : 420, maxHeight: 500, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ background: isDarkMode ? '#1a1a1a' : '#fff', borderRadius: 8, boxShadow: isDarkMode ? '0 4px 12px rgba(0,0,0,0.6)' : '0 4px 12px rgba(0,0,0,0.15)', width: isMobile ? '92vw' : 420, maxHeight: 500, overflow: 'hidden', display: 'flex', flexDirection: 'column', border: isDarkMode ? '1px solid #2a2a2a' : 'none' }}>
                   <div style={{ padding: '12px 16px', borderBottom: '1px solid #f0f0f0', fontWeight: 600, fontSize: 14 }}>
                     Notifications ({notificationCount})
                   </div>
@@ -1379,7 +1482,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
                       <div style={{ padding: 32, textAlign: 'center', color: '#999' }}>No new notifications</div>
                     ) : (
                       notifications.slice(0, 5).map((notif) => (
-                        <div key={notif.id} style={{ padding: 12, borderBottom: '1px solid #f5f5f5', background: '#fafafa' }}>
+                        <div key={notif.id} style={{ padding: 12, borderBottom: isDarkMode ? '1px solid #2a2a2a' : '1px solid #f5f5f5', background: isDarkMode ? '#1e1e1e' : '#fafafa' }}>
                           <div style={{ marginBottom: 8 }}>
                             <Text strong style={{ fontSize: 13 }}>{notif.full_name}</Text>
                             <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>wants to book</Text>
@@ -1462,7 +1565,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
           </div>
         </Header>
 
-        <Content style={{ margin: isMobile ? 12 : 24, padding: isMobile ? 12 : 24, background: '#fff', borderRadius: 12, boxShadow: '0 4px 16px rgba(15, 23, 42, 0.06)', flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+        <Content style={{ margin: isMobile ? 12 : 24, padding: isMobile ? 12 : 24, background: isDarkMode ? '#1a1a1a' : '#fff', borderRadius: 12, boxShadow: isDarkMode ? '0 4px 16px rgba(0, 0, 0, 0.4)' : '0 4px 16px rgba(15, 23, 42, 0.06)', flex: 1, overflowY: 'auto', overflowX: 'hidden', border: isDarkMode ? '1px solid #2a2a2a' : 'none' }}>
           {renderSection()}
         </Content>
 

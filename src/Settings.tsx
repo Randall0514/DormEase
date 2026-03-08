@@ -57,7 +57,7 @@ const Settings: React.FC = () => {
   };
 
   return (
-    <div style={{ padding: isMobile ? 12 : 24, height: '100%', display: 'flex', flexDirection: 'column', background: darkMode ? '#000000' : '#f5f7fa', transition: 'background 0.3s ease', overflowX: 'hidden' }}>
+    <div style={{ padding: isMobile ? 12 : 24, height: '100%', display: 'flex', flexDirection: 'column', background: darkMode ? '#0f0f0f' : '#f5f7fa', transition: 'background 0.3s ease', overflowX: 'hidden' }}>
       <div style={{ maxWidth: 1000, margin: '0 auto', flex: 1, overflowY: 'auto', overflowX: 'hidden', width: '100%' }}>
         <Title level={2} style={{ marginBottom: 8, color: darkMode ? '#fff' : '#000' }}>Settings</Title>
         <Text type="secondary" style={{ display: 'block', marginBottom: 24 }}>
@@ -72,8 +72,8 @@ const Settings: React.FC = () => {
               boxShadow: darkMode 
                 ? '0 4px 12px rgba(0,0,0,0.5)' 
                 : '0 4px 12px rgba(0,0,0,0.08)',
-              background: darkMode ? '#0a0a0a' : '#fff',
-              border: darkMode ? '1px solid #1a1a1a' : '1px solid #f0f0f0'
+              background: darkMode ? '#1a1a1a' : '#fff',
+              border: darkMode ? '1px solid #2a2a2a' : '1px solid #f0f0f0'
             }}
           >
             <Row justify="space-between" align="middle" gutter={[16, 16]}>
@@ -141,8 +141,8 @@ const Settings: React.FC = () => {
                 style={{ 
                   borderRadius: 12, 
                   textAlign: 'center',
-                  background: darkMode ? '#0a0a0a' : '#fff',
-                  border: darkMode ? '1px solid #1a1a1a' : '1px solid #f0f0f0'
+                  background: darkMode ? '#1a1a1a' : '#fff',
+                  border: darkMode ? '1px solid #2a2a2a' : '1px solid #f0f0f0'
                 }}
                 bodyStyle={{ padding: 24 }}
               >
@@ -160,8 +160,8 @@ const Settings: React.FC = () => {
                 style={{ 
                   borderRadius: 12, 
                   textAlign: 'center',
-                  background: darkMode ? '#0a0a0a' : '#fff',
-                  border: darkMode ? '1px solid #1a1a1a' : '1px solid #f0f0f0'
+                  background: darkMode ? '#1a1a1a' : '#fff',
+                  border: darkMode ? '1px solid #2a2a2a' : '1px solid #f0f0f0'
                 }}
                 bodyStyle={{ padding: 24 }}
               >
@@ -179,8 +179,8 @@ const Settings: React.FC = () => {
                 style={{ 
                   borderRadius: 12, 
                   textAlign: 'center',
-                  background: darkMode ? '#0a0a0a' : '#fff',
-                  border: darkMode ? '1px solid #1a1a1a' : '1px solid #f0f0f0'
+                  background: darkMode ? '#1a1a1a' : '#fff',
+                  border: darkMode ? '1px solid #2a2a2a' : '1px solid #f0f0f0'
                 }}
                 bodyStyle={{ padding: 24 }}
               >
@@ -208,8 +208,8 @@ const Settings: React.FC = () => {
               boxShadow: darkMode 
                 ? '0 4px 12px rgba(0,0,0,0.5)' 
                 : '0 4px 12px rgba(0,0,0,0.08)',
-              background: darkMode ? '#0a0a0a' : '#fff',
-              border: darkMode ? '1px solid #1a1a1a' : '1px solid #f0f0f0'
+              background: darkMode ? '#1a1a1a' : '#fff',
+              border: darkMode ? '1px solid #2a2a2a' : '1px solid #f0f0f0'
             }}
           >
             <Space direction="vertical" style={{ width: '100%' }} size="middle">

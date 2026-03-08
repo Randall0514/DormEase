@@ -28,6 +28,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   isMobile = false,
   unreadMessageCount = 0,
 }) => {
+  const isDarkMode = document.body.classList.contains('dark-mode');
+  
   // Define menu items in the visual order we want
   const menuItems = [
     { key: 'home', icon: <HomeOutlined />, label: 'Home' },
@@ -114,6 +116,10 @@ const Sidebar: React.FC<SidebarProps> = ({
     </div>
   );
 
+  const sidebarBackground = isDarkMode 
+    ? 'linear-gradient(180deg, #1e1e1e 0%, #121212 100%)'
+    : 'linear-gradient(180deg, #4f73ff 0%, #79acff 100%)';
+
   if (isMobile) {
     return (
       <div
@@ -124,8 +130,8 @@ const Sidebar: React.FC<SidebarProps> = ({
           bottom: 0,
           width: 220,
           transform: collapsed ? 'translateX(-100%)' : 'translateX(0)',
-          transition: 'transform 0.25s ease',
-          background: 'linear-gradient(180deg, #4f73ff 0%, #79acff 100%)',
+          transition: 'transform 0.25s ease, background 0.3s ease',
+          background: sidebarBackground,
           zIndex: 1000,
           boxShadow: !collapsed ? '0 6px 24px rgba(0,0,0,0.25)' : undefined,
           overflowY: 'auto',
@@ -145,8 +151,9 @@ const Sidebar: React.FC<SidebarProps> = ({
       collapsedWidth={0}
       width={220}
       style={{
-        background: 'linear-gradient(180deg, #4f73ff 0%, #79acff 100%)',
+        background: sidebarBackground,
         position: 'relative',
+        transition: 'background 0.3s ease',
       }}
     >
       {menuContent}

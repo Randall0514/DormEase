@@ -42,6 +42,16 @@ type ChangeOtpRecord = {
   lastSentAt: number;
 };
 
+type PaymentReceiptRecord = {
+  paymentNumber: number;
+  paymentSource: "monthly" | "advance" | "deposit";
+  tenantName: string;
+  dormitory: string;
+  amountPaid: number;
+  paymentDate: string;
+  nextPaymentDueDate: string | null;
+};
+
 const signupOtpStore = new Map<string, SignupOtpRecord>();
 const changeOtpStore = new Map<number, ChangeOtpRecord>();
 let smtpTransporter: nodemailer.Transporter | null | undefined;
@@ -64,6 +74,7 @@ function getSmtpTransporter(): nodemailer.Transporter | null {
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
   const secure = process.env.SMTP_SECURE === "true";
+  const allowSelfSigned = process.env.SMTP_ALLOW_SELF_SIGNED === "true";
 
   if (!host || !user || !pass) {
     smtpTransporter = null;
@@ -78,9 +89,273 @@ function getSmtpTransporter(): nodemailer.Transporter | null {
       user,
       pass,
     },
+    tls: allowSelfSigned ? { rejectUnauthorized: false } : undefined,
   });
 
   return smtpTransporter;
+}
+
+function parseReservationDate(value: string): Date | null {
+  const input = String(value || "").trim();
+  if (!input) return null;
+
+  if (input.includes("/")) {
+    const [day, month, year] = input.split("/").map(Number);
+    if (!day || !month || !year) return null;
+    const parsed = new Date(year, month - 1, day);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  const parsed = new Date(input);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatDateForEmail(date: Date): string {
+  return date.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
+async function sendPaymentConfirmationEmail(params: {
+  tenantEmail: string;
+  tenantName: string;
+  tenantPhone: string;
+  dormitory: string;
+  dormAddress: string;
+  dormPhone: string;
+  dormEmail: string;
+  ownerName: string;
+  paymentNumber: number;
+  paymentSource: string;
+  amountPaid: number;
+  paymentDate: Date;
+  nextPaymentDueDate: Date | null;
+}): Promise<{ sent: boolean; message: string }> {
+  const transporter = getSmtpTransporter();
+  if (!transporter) {
+    return { sent: false, message: "SMTP is not configured on the server" };
+  }
+
+  const fromAddress = process.env.SMTP_FROM || process.env.SMTP_USER;
+  if (!fromAddress) {
+    return { sent: false, message: "SMTP sender is not configured" };
+  }
+
+  const escapeHtml = (value: string) =>
+    String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
+  const amountText = `₱${Number(params.amountPaid || 0).toLocaleString("en-PH")}`;
+  const paymentDateText = formatDateForEmail(params.paymentDate);
+  const nextDueDateText = params.nextPaymentDueDate
+    ? formatDateForEmail(params.nextPaymentDueDate)
+    : "No remaining due date";
+  const issuedAtDate = new Date();
+  const issuedAt = issuedAtDate.toLocaleString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  }).replace(/,\s*/, ' at ');
+  const contactNumber = params.dormPhone ? `+63${params.dormPhone}` : 'N/A';
+
+  const text = [
+    `Hello ${params.tenantName},`,
+    "",
+    "Payment Details",
+    `Tenant Name: ${params.tenantName}`,
+    `Dormitory: ${params.dormitory}`,
+    `Amount Paid: ${amountText}`,
+    `Payment Date: ${paymentDateText}`,
+    "",
+    `Next Payment Due Date: ${nextDueDateText}`,
+    "",
+    "Thank you for using DormEase. If you have any concerns, please contact the dorm owner.",
+    "",
+    "Best regards,",
+    "DormEase",
+    "",
+    "---",
+    "",
+    "PAYMENT RECEIPT",
+    `Receipt #${params.paymentNumber}`,
+    `Issued: ${issuedAt}`,
+    "",
+    `System name: DormEase – Dormitory, Management System`,
+    "",
+    `DORMITORY NAME: ${params.dormitory}`,
+    `DORM ADDRESS: ${params.dormAddress}`,
+    `CONTACT NUMBER: ${contactNumber}`,
+    `EMAIL ADDRESS: ${params.dormEmail}`,
+    "",
+    `TENANT NAME: ${params.tenantName}`,
+    `PAYMENT: Payment #${params.paymentNumber} (Paid via ${params.paymentSource})`,
+    `PAYMENT DATE: ${paymentDateText}`,
+    `NEXT PAYMENT DUE DATE: ${nextDueDateText}`,
+    `AMOUNT: ${amountText}`,
+    "",
+    `TENANT SIGNATURE OVER PRINTED NAME: ${params.tenantName}`,
+    `OWNER SIGNATURE OVER PRINTED NAME: ${params.ownerName}`,
+    "",
+    "DormEase Receipt • Keep this copy for your payment records",
+  ].join("\n");
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <title>Payment Receipt</title>
+      <style>
+        @media print {
+          body { background: white !important; padding: 0 !important; }
+          .no-print { display: none !important; }
+          .greeting { page-break-after: always; }
+        }
+        * { box-sizing: border-box; }
+        body { margin: 0; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: #f5f5f5; }
+        .email-wrapper { max-width: 820px; margin: 0 auto; }
+        .greeting { background: white; padding: 30px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+        .greeting h2 { margin: 0 0 20px 0; color: #1f2937; font-size: 20px; font-weight: 600; }
+        .greeting p { margin: 8px 0; color: #4b5563; line-height: 1.6; font-size: 14px; }
+        .greeting .detail-label { font-weight: 600; color: #1f2937; }
+        .receipt-card { background: white; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); overflow: hidden; border: 1px solid #e5e7eb; }
+        .receipt-header { display: flex; align-items: center; justify-content: space-between; padding: 28px 36px; border-bottom: 1px solid #e5e7eb; }
+        .logo-section { display: flex; align-items: center; gap: 12px; }
+        .logo { width: 52px; height: 52px; background: #1e3a8a; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: 700; font-size: 20px; flex-shrink: 0; }
+        .logo-text { font-size: 13px; color: #6b7280; }
+        .receipt-title { font-size: 26px; font-weight: 600; color: #1e293b; letter-spacing: -0.025em; }
+        .system-name { padding: 18px 36px; background: white; border-bottom: 1px solid #e5e7eb; font-size: 15px; color: #374151; font-weight: 500; }
+        .receipt-content { padding: 32px 36px; }
+        .info-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 0; }
+        .info-field { padding: 18px 20px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0; }
+        .info-label { font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: 600; margin-bottom: 8px; letter-spacing: 0.05em; }
+        .info-value { font-size: 15px; color: #0f172a; font-weight: 500; line-height: 1.4; word-break: break-word; }
+        .info-field.full-width { grid-column: 1 / -1; }
+        .signatures { display: grid; grid-template-columns: repeat(2, 1fr); gap: 40px; margin-top: 48px; padding-top: 40px; border-top: 2px solid #e5e7eb; }
+        .signature-box { text-align: center; }
+        .signature-line { border-top: 2px solid #0f172a; padding-top: 10px; margin-top: 70px; font-weight: 500; font-size: 15px; color: #0f172a; }
+        .signature-label { font-size: 10px; color: #6366f1; text-transform: uppercase; margin-top: 6px; letter-spacing: 0.05em; font-weight: 600; }
+        .receipt-footer { padding: 22px 36px; background: white; border-top: 1px solid #e5e7eb; text-align: center; color: #6b7280; font-size: 13px; }
+        .receipt-footer strong { color: #1f2937; font-weight: 600; }
+      </style>
+    </head>
+    <body>
+      <div class="email-wrapper">
+        <!-- Greeting Message -->
+        <div class="greeting">
+          <h2>DormEase Payment Confirmation</h2>
+          <p>Hello ${escapeHtml(params.tenantName)},</p>
+          <p style="margin-top: 16px; font-weight: 600;">Payment Details</p>
+          <p><span class="detail-label">Tenant Name:</span> ${escapeHtml(params.tenantName)}</p>
+          <p><span class="detail-label">Dormitory:</span> ${escapeHtml(params.dormitory)}</p>
+          <p><span class="detail-label">Amount Paid:</span> ${escapeHtml(amountText)}</p>
+          <p><span class="detail-label">Payment Date:</span> ${escapeHtml(paymentDateText)}</p>
+          <p style="margin-top: 12px;"><span class="detail-label">Next Payment Due Date:</span> ${escapeHtml(nextDueDateText)}</p>
+          <p style="margin-top: 20px;">Thank you for using DormEase. If you have any concerns, please contact the dorm owner.</p>
+          <p style="margin-top: 16px;">Best regards,<br><strong>DormEase</strong></p>
+        </div>
+
+        <!-- Receipt -->
+        <div class="receipt-card">
+          <div class="receipt-header">
+            <div class="logo-section">
+              <div class="logo">DE</div>
+              <div class="logo-text">DormEase</div>
+            </div>
+            <div class="receipt-title">Payment Receipt</div>
+          </div>
+          
+          <div class="system-name">
+            System name: DormEase – Dormitory, Management System
+          </div>
+          
+          <div class="receipt-content">
+            <div class="info-grid">
+              <div class="info-field">
+                <div class="info-label">DORMITORY NAME</div>
+                <div class="info-value">${escapeHtml(params.dormitory)}</div>
+              </div>
+              <div class="info-field">
+                <div class="info-label">DATE ISSUED</div>
+                <div class="info-value">${escapeHtml(issuedAt)}</div>
+              </div>
+              <div class="info-field full-width">
+                <div class="info-label">DORM ADDRESS</div>
+                <div class="info-value">${escapeHtml(params.dormAddress)}</div>
+              </div>
+              <div class="info-field">
+                <div class="info-label">CONTACT NUMBER</div>
+                <div class="info-value">${escapeHtml(contactNumber)}</div>
+              </div>
+              <div class="info-field">
+                <div class="info-label">EMAIL ADDRESS</div>
+                <div class="info-value">${escapeHtml(params.dormEmail)}</div>
+              </div>
+              <div class="info-field">
+                <div class="info-label">TENANT NAME</div>
+                <div class="info-value">${escapeHtml(params.tenantName)}</div>
+              </div>
+              <div class="info-field">
+                <div class="info-label">PAYMENT</div>
+                <div class="info-value">Payment #${params.paymentNumber} (Paid via ${escapeHtml(params.paymentSource)})</div>
+              </div>
+              <div class="info-field">
+                <div class="info-label">PAYMENT DATE</div>
+                <div class="info-value">${escapeHtml(paymentDateText)}</div>
+              </div>
+              <div class="info-field">
+                <div class="info-label">NEXT PAYMENT DUE DATE</div>
+                <div class="info-value">${escapeHtml(nextDueDateText)}</div>
+              </div>
+              <div class="info-field">
+                <div class="info-label">AMOUNT</div>
+                <div class="info-value">${escapeHtml(amountText)}</div>
+              </div>
+            </div>
+            
+            <div class="signatures">
+              <div class="signature-box">
+                <div class="signature-line">${escapeHtml(params.tenantName)}</div>
+                <div class="signature-label">TENANT SIGNATURE OVER PRINTED NAME</div>
+              </div>
+              <div class="signature-box">
+                <div class="signature-line">${escapeHtml(params.ownerName)}</div>
+                <div class="signature-label">OWNER SIGNATURE OVER PRINTED NAME</div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="receipt-footer">
+            <strong>DormEase Receipt</strong> • Keep this copy for your payment records
+          </div>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  try {
+    await transporter.sendMail({
+      from: fromAddress,
+      to: params.tenantEmail,
+      subject: "DormEase Payment Confirmation",
+      text,
+      html,
+    });
+    return { sent: true, message: "Confirmation email sent to tenant" };
+  } catch (err: any) {
+    const errorMessage = err?.response || err?.message || "Failed to send confirmation email";
+    return { sent: false, message: String(errorMessage) };
+  }
 }
 
 function verifyAndConsumeSignupOtp(email: string, otp: string): { ok: boolean; message?: string } {
@@ -1020,7 +1295,8 @@ app.post("/reservations", async (req, res) => {
   const {
     dorm_name, location, full_name, phone, move_in_date,
     duration_months, price_per_month, deposit, advance,
-    total_amount, notes, payment_method, dorm_owner_id,
+    total_amount, notes, payment_method, dorm_owner_id, tenant_email,
+    tenantEmail: tenantEmailCamelCase,
   } = req.body;
 
   if (!dorm_name || !full_name || !phone || !move_in_date || !duration_months) {
@@ -1028,6 +1304,7 @@ app.post("/reservations", async (req, res) => {
   }
 
   try {
+    const requesterUserId = await getUserIdFromToken(req);
     let ownerId = dorm_owner_id ?? null;
     if (!ownerId) {
       const dormResult = await pool.query(
@@ -1039,12 +1316,46 @@ app.post("/reservations", async (req, res) => {
       }
     }
 
+    const tenantEmailFromRequest = tenant_email ?? tenantEmailCamelCase;
+    let tenantEmail: string | null = tenantEmailFromRequest
+      ? String(tenantEmailFromRequest).trim().toLowerCase()
+      : null;
+
+    if (!tenantEmail && requesterUserId !== null) {
+      const requester = await pool.query("SELECT email FROM users WHERE id = $1", [requesterUserId]);
+      if (requester.rows.length > 0) {
+        tenantEmail = String(requester.rows[0].email || "").trim().toLowerCase() || null;
+      }
+    }
+
+    if (!tenantEmail) {
+      const byName = await pool.query(
+        `SELECT email
+         FROM users
+         WHERE lower(trim(full_name)) = lower(trim($1))
+         ORDER BY id DESC
+         LIMIT 1`,
+        [full_name]
+      );
+      if (byName.rows.length > 0) {
+        tenantEmail = String(byName.rows[0].email || "").trim().toLowerCase() || null;
+      }
+    }
+    
+    console.log("📧 Reservation Creation - tenant_email:", {
+      fromRequestSnakeCase: tenant_email || null,
+      fromRequestCamelCase: tenantEmailCamelCase || null,
+      fromAuthUser: requesterUserId ? "lookup attempted" : "no auth",
+      finalEmail: tenantEmail,
+      tenantName: full_name
+    });
+
     const result = await pool.query(
       `INSERT INTO reservations
         (dorm_name, location, full_name, phone, move_in_date, duration_months,
          price_per_month, deposit, advance, total_amount, notes, payment_method,
-         dorm_owner_id, status, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'pending', NOW())
+         dorm_owner_id, tenant_email, status, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'pending', NOW())
        RETURNING *`,
       [
         dorm_name, location, full_name, phone, move_in_date, duration_months,
@@ -1055,6 +1366,7 @@ app.post("/reservations", async (req, res) => {
         notes            ?? "",
         payment_method   ?? "cash_on_move_in",
         ownerId,
+        tenantEmail,
       ]
     );
     return res.status(201).json({ message: "Reservation submitted successfully", reservation: result.rows[0] });
@@ -1076,6 +1388,7 @@ app.get("/reservations", async (req, res) => {
               r.notes, r.payment_method, r.status, r.rejection_reason, r.termination_reason,
               r.tenant_action, r.cancel_reason, r.tenant_action_at, r.payments_paid,
               r.advance_used, r.deposit_used,
+              r.tenant_email, r.receipt_history,
               r.created_at, d.room_capacity, d.id as dorm_id
        FROM reservations r
        LEFT JOIN dorms d ON d.user_id = r.dorm_owner_id
@@ -1132,6 +1445,8 @@ app.get("/reservations/tenant", async (req, res) => {
          r.payments_paid,
          r.advance_used,
          r.deposit_used,
+         r.tenant_email,
+         r.receipt_history,
          r.created_at,
          r.dorm_owner_id,
          u.full_name AS owner_name
@@ -1192,6 +1507,8 @@ app.get("/reservations/tenant/me", async (req, res) => {
          r.payments_paid,
          r.advance_used,
          r.deposit_used,
+         r.tenant_email,
+         r.receipt_history,
          r.created_at,
          r.dorm_owner_id,
          u.full_name AS owner_name
@@ -1328,14 +1645,58 @@ app.patch("/reservations/:id/mark-payment-paid", async (req, res) => {
   }
   try {
     const rid = Number(req.params.id);
-    const { paymentNumber, paymentSource } = req.body;
+    const { paymentNumber, paymentSource } = req.body as {
+      paymentNumber?: number;
+      paymentSource?: "advance" | "deposit" | "monthly";
+    };
+    const parsedPaymentNumber = Number(paymentNumber);
 
-    if (!paymentNumber || paymentNumber < 1) {
+    if (!Number.isInteger(parsedPaymentNumber) || parsedPaymentNumber < 1) {
       return res.status(400).json({ message: "Invalid payment number" });
     }
 
     const current = await pool.query(
-      "SELECT payments_paid, duration_months, advance_used, deposit_used FROM reservations WHERE id = $1 AND dorm_owner_id = $2",
+      `SELECT
+         r.payments_paid,
+         r.duration_months,
+         r.advance_used,
+         r.deposit_used,
+         r.full_name,
+         r.phone,
+         r.dorm_name,
+         r.price_per_month,
+         r.move_in_date,
+         r.tenant_email,
+         r.receipt_history,
+         d.address AS dorm_address,
+         d.phone AS dorm_phone,
+         d.email AS dorm_email,
+         d.dorm_name AS dorm_owner_name,
+         tenant_lookup.email AS tenant_email_from_user,
+         reservation_lookup.tenant_email AS tenant_email_from_other_reservation
+       FROM reservations r
+       LEFT JOIN dorms d ON d.user_id = r.dorm_owner_id
+       LEFT JOIN LATERAL (
+         SELECT u.email
+         FROM users u
+         WHERE lower(trim(u.full_name)) = lower(trim(r.full_name))
+         ORDER BY u.id DESC
+         LIMIT 1
+       ) tenant_lookup ON true
+       LEFT JOIN LATERAL (
+         SELECT rr.tenant_email
+         FROM reservations rr
+         WHERE rr.id <> r.id
+           AND rr.tenant_email IS NOT NULL
+           AND trim(rr.tenant_email) <> ''
+           AND (
+             lower(trim(rr.full_name)) = lower(trim(r.full_name))
+             OR trim(rr.phone) = trim(r.phone)
+           )
+         ORDER BY rr.id DESC
+         LIMIT 1
+       ) reservation_lookup ON true
+       WHERE r.id = $1 AND r.dorm_owner_id = $2`,
       [rid, userId]
     );
 
@@ -1347,31 +1708,113 @@ app.patch("/reservations/:id/mark-payment-paid", async (req, res) => {
     const totalPayments  = current.rows[0].duration_months;
     const advanceUsed    = current.rows[0].advance_used || false;
     const depositUsed    = current.rows[0].deposit_used || false;
+    const paymentSourceValue: "monthly" | "advance" | "deposit" =
+      paymentSource === "advance" || paymentSource === "deposit" ? paymentSource : "monthly";
 
-    if (paymentSource === 'advance' && advanceUsed) {
+    if (paymentSourceValue === "advance" && advanceUsed) {
       return res.status(400).json({ message: "Advance has already been used" });
     }
-    if (paymentSource === 'deposit' && depositUsed) {
+    if (paymentSourceValue === "deposit" && depositUsed) {
       return res.status(400).json({ message: "Deposit has already been used" });
     }
-    if (paymentNumber !== currentPaid + 1) {
+    if (parsedPaymentNumber !== currentPaid + 1) {
       return res.status(400).json({
         message: `Can only mark payment #${currentPaid + 1} as paid. Please pay in order.`
       });
     }
-    if (paymentNumber > totalPayments) {
+    if (parsedPaymentNumber > totalPayments) {
       return res.status(400).json({ message: "Payment number exceeds contract duration" });
     }
 
-    let updateQuery = "UPDATE reservations SET payments_paid = $1";
-    const params: any[] = [paymentNumber];
-    if (paymentSource === 'advance') updateQuery += `, advance_used = true`;
-    else if (paymentSource === 'deposit') updateQuery += `, deposit_used = true`;
-    updateQuery += ` WHERE id = $2 AND dorm_owner_id = $3 RETURNING *`;
-    params.push(rid, userId);
+    const paymentDate = new Date();
+    const moveInDate = parseReservationDate(String(current.rows[0].move_in_date || ""));
+    const nextPaymentDueDate =
+      moveInDate && parsedPaymentNumber < totalPayments
+        ? new Date(moveInDate.getFullYear(), moveInDate.getMonth() + parsedPaymentNumber, moveInDate.getDate())
+        : null;
+
+    const receiptRecord: PaymentReceiptRecord = {
+      paymentNumber: parsedPaymentNumber,
+      paymentSource: paymentSourceValue,
+      tenantName: String(current.rows[0].full_name || "Tenant"),
+      dormitory: String(current.rows[0].dorm_name || "Dormitory"),
+      amountPaid: Number(current.rows[0].price_per_month || 0),
+      paymentDate: paymentDate.toISOString(),
+      nextPaymentDueDate: nextPaymentDueDate ? nextPaymentDueDate.toISOString() : null,
+    };
+
+    const tenantEmailFromReservation = String(current.rows[0].tenant_email || "").trim().toLowerCase();
+    const tenantEmailFromOtherReservation = String(current.rows[0].tenant_email_from_other_reservation || "").trim().toLowerCase();
+    const tenantEmailFromLookup = String(current.rows[0].tenant_email_from_user || "").trim().toLowerCase();
+    const tenantEmail = tenantEmailFromReservation || tenantEmailFromOtherReservation || tenantEmailFromLookup || null;
+    
+    console.log("📧 Payment Email Debug:", {
+      reservationId: rid,
+      tenantName: current.rows[0].full_name,
+      tenantEmailFromReservation,
+      tenantEmailFromOtherReservation,
+      tenantEmailFromLookup,
+      finalTenantEmail: tenantEmail,
+      willSendEmail: !!tenantEmail
+    });
+
+    let updateQuery = "UPDATE reservations SET payments_paid = $1, receipt_history = COALESCE(receipt_history, '[]'::jsonb) || $2::jsonb";
+    const params: any[] = [parsedPaymentNumber, JSON.stringify([receiptRecord])];
+    if (paymentSourceValue === "advance") updateQuery += `, advance_used = true`;
+    else if (paymentSourceValue === "deposit") updateQuery += `, deposit_used = true`;
+    if (tenantEmail) {
+      updateQuery += `, tenant_email = COALESCE(tenant_email, $3)`;
+      params.push(tenantEmail);
+      updateQuery += ` WHERE id = $4 AND dorm_owner_id = $5 RETURNING *`;
+      params.push(rid, userId);
+    } else {
+      updateQuery += ` WHERE id = $3 AND dorm_owner_id = $4 RETURNING *`;
+      params.push(rid, userId);
+    }
 
     const result = await pool.query(updateQuery, params);
-    return res.json({ message: "Payment marked as paid", reservation: result.rows[0] });
+
+    let emailSent = false;
+    let emailMessage = "Tenant email is not available";
+    if (tenantEmail) {
+      console.log("📧 Attempting to send payment email to:", tenantEmail);
+      const paymentSourceLabel =
+        paymentSourceValue === 'advance'
+          ? 'Advance'
+          : paymentSourceValue === 'deposit'
+            ? 'Deposit'
+            : 'Monthly';
+      const emailResult = await sendPaymentConfirmationEmail({
+        tenantEmail,
+        tenantName: receiptRecord.tenantName,
+        tenantPhone: String(current.rows[0].phone || 'N/A'),
+        dormitory: receiptRecord.dormitory,
+        dormAddress: String(current.rows[0].dorm_address || 'N/A'),
+        dormPhone: String(current.rows[0].dorm_phone || ''),
+        dormEmail: String(current.rows[0].dorm_email || 'N/A'),
+        ownerName: String(current.rows[0].dorm_owner_name || receiptRecord.dormitory) + ' Owner',
+        paymentNumber: parsedPaymentNumber,
+        paymentSource: paymentSourceLabel,
+        amountPaid: receiptRecord.amountPaid,
+        paymentDate,
+        nextPaymentDueDate,
+      });
+      emailSent = emailResult.sent;
+      emailMessage = emailResult.message;
+      console.log("📧 Email result:", { emailSent, emailMessage });
+    } else {
+      console.log("📧 Skipping email - no tenant email found");
+    }
+
+    return res.json({
+      message: emailSent
+        ? "Payment marked as paid and confirmation email sent"
+        : "Payment marked as paid",
+      reservation: result.rows[0],
+      receipt: receiptRecord,
+      emailSent,
+      emailMessage,
+    });
   } catch (err) {
     console.error("Mark payment paid error:", err);
     return res.status(500).json({ message: "Database error" });
@@ -1477,6 +1920,124 @@ app.delete("/reservations/:id", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
+// PAYMENT HISTORY
+// ─────────────────────────────────────────────
+
+app.get("/payment-history", async (req, res) => {
+  const userId = await getUserIdFromToken(req);
+  if (userId === null) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    const { sortBy = "payment_date", order = "DESC", limit = 100, offset = 0 } = req.query;
+    const sortColumn = ["payment_date", "amount", "status", "tenant_name", "dorm_name"].includes(String(sortBy)) ? String(sortBy) : "payment_date";
+    const sortOrder = String(order).toUpperCase() === "ASC" ? "ASC" : "DESC";
+    const pageLimit = Math.min(Number(limit) || 100, 500);
+    const pageOffset = Math.max(Number(offset) || 0, 0);
+
+    const result = await pool.query(
+      `SELECT 
+        id, owner_id, tenant_id, reservation_id, tenant_name, dorm_name, 
+        amount, payment_source, payment_number, payment_date, status, created_at
+      FROM payment_history
+      WHERE owner_id = $1 OR tenant_id = $1
+      ORDER BY ${sortColumn} ${sortOrder}
+      LIMIT $2 OFFSET $3`,
+      [userId, pageLimit, pageOffset]
+    );
+
+    const countResult = await pool.query(
+      "SELECT COUNT(*) FROM payment_history WHERE owner_id = $1 OR tenant_id = $1",
+      [userId]
+    );
+
+    return res.json({
+      payments: result.rows,
+      total: Number(countResult.rows[0].count),
+      limit: pageLimit,
+      offset: pageOffset,
+    });
+  } catch (err) {
+    console.error("Get payment history error:", err);
+    const msg = process.env.NODE_ENV === 'production' ? 'Database error' : (err && (err as any).message) || 'Database error';
+    return res.status(500).json({ message: msg });
+  }
+});
+
+app.post("/payment-history", async (req, res) => {
+  const userId = await getUserIdFromToken(req);
+  if (userId === null) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    const { tenant_id, reservation_id, tenant_name, dorm_name, amount, payment_source, payment_number, status } = req.body;
+
+    if (!tenant_name || !dorm_name || !amount || !payment_source) {
+      return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO payment_history 
+        (owner_id, tenant_id, reservation_id, tenant_name, dorm_name, amount, payment_source, payment_number, status)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      RETURNING *`,
+      [userId, tenant_id || null, reservation_id || null, tenant_name, dorm_name, amount, payment_source, payment_number || null, status || 'paid']
+    );
+
+    return res.status(201).json({ payment: result.rows[0], message: "Payment recorded" });
+  } catch (err) {
+    console.error("Create payment history error:", err);
+    const msg = process.env.NODE_ENV === 'production' ? 'Database error' : (err && (err as any).message) || 'Database error';
+    return res.status(500).json({ message: msg });
+  }
+});
+
+app.get("/payment-history/stats", async (req, res) => {
+  const userId = await getUserIdFromToken(req);
+  if (userId === null) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    const statsResult = await pool.query(
+      `SELECT 
+        COUNT(*) as total_payments,
+        SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END) as total_paid,
+        SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END) as total_pending,
+        SUM(CASE WHEN status = 'overdue' THEN amount ELSE 0 END) as total_overdue,
+        AVG(amount) as avg_payment
+      FROM payment_history
+      WHERE owner_id = $1 OR tenant_id = $1`,
+      [userId]
+    );
+
+    const monthlyResult = await pool.query(
+      `SELECT 
+        DATE_TRUNC('month', payment_date)::date as month,
+        SUM(amount) as total_amount,
+        COUNT(*) as payment_count
+      FROM payment_history
+      WHERE (owner_id = $1 OR tenant_id = $1) AND status = 'paid'
+      GROUP BY DATE_TRUNC('month', payment_date)
+      ORDER BY month DESC
+      LIMIT 12`,
+      [userId]
+    );
+
+    return res.json({
+      stats: statsResult.rows[0],
+      monthly: monthlyResult.rows,
+    });
+  } catch (err) {
+    console.error("Get payment stats error:", err);
+    const msg = process.env.NODE_ENV === 'production' ? 'Database error' : (err && (err as any).message) || 'Database error';
+    return res.status(500).json({ message: msg });
+  }
+});
+
+// ─────────────────────────────────────────────
 // SCHEMA MIGRATION
 // ─────────────────────────────────────────────
 
@@ -1507,6 +2068,31 @@ async function ensureSchema(): Promise<void> {
     await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS payments_paid integer NOT NULL DEFAULT 0;");
     await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS advance_used boolean NOT NULL DEFAULT false;");
     await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS deposit_used boolean NOT NULL DEFAULT false;");
+    await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS tenant_email varchar(255);");
+    await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS receipt_history jsonb NOT NULL DEFAULT '[]'::jsonb;");
+
+    // ── Payment History Table ─────────────────────────────────────────────
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS payment_history (
+        id serial PRIMARY KEY,
+        owner_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        tenant_id integer REFERENCES users(id) ON DELETE SET NULL,
+        reservation_id integer REFERENCES reservations(id) ON DELETE CASCADE,
+        tenant_name varchar(255) NOT NULL,
+        dorm_name varchar(255) NOT NULL,
+        amount decimal(10, 2) NOT NULL,
+        payment_source varchar(50) NOT NULL CHECK (payment_source IN ('monthly', 'advance', 'deposit')),
+        payment_number integer,
+        payment_date timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        status varchar(50) NOT NULL DEFAULT 'paid' CHECK (status IN ('paid', 'pending', 'overdue')),
+        created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await pool.query("CREATE INDEX IF NOT EXISTS idx_payment_history_owner ON payment_history(owner_id);");
+    await pool.query("CREATE INDEX IF NOT EXISTS idx_payment_history_tenant ON payment_history(tenant_id);");
+    await pool.query("CREATE INDEX IF NOT EXISTS idx_payment_history_reservation ON payment_history(reservation_id);");
+    await pool.query("CREATE INDEX IF NOT EXISTS idx_payment_history_date ON payment_history(payment_date);");
+    await pool.query("CREATE INDEX IF NOT EXISTS idx_payment_history_status ON payment_history(status);");
 
     console.log('✅ Schema up to date');
   } catch (err) {
@@ -1529,7 +2115,7 @@ async function startServer() {
   app.set('io', io);
 
   httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running at http://10.37.20.131:${PORT}`);
+    console.log(`🚀 Server running at http://192.168.68.131:${PORT}`);
     console.log(`🔌 WebSocket server is ready`);
   });
 }

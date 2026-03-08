@@ -40,6 +40,7 @@ type Props = { onNavigate?: (section: string) => void };
 const ArchivedNotifications: React.FC<Props> = ({ onNavigate }) => {
   const screens = useBreakpoint();
   const isMobile = !screens.md;
+  const isDarkMode = document.body.classList.contains('dark-mode');
 
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [loading, setLoading] = useState(true);
