@@ -470,6 +470,14 @@ async function canUsersMessageEachOther(senderId: number, recipientId: number): 
   return result.rows.length > 0;
 }
 
+async function canDormOwnerMessageNonTenant(ownerId: number, recipientId: number): Promise<boolean> {
+  if (!ownerId || !recipientId || ownerId === recipientId) {
+    return false;
+  }
+  // Any authenticated user can message any other user
+  return true;
+}
+
 async function canAccessConversation(currentUserId: number, otherUserId: number): Promise<boolean> {
   if (!currentUserId || !otherUserId || currentUserId === otherUserId) {
     return false;
@@ -860,7 +868,7 @@ app.get("/dorms/me", async (req, res) => {
   }
   try {
     const result = await pool.query(
-      "SELECT id, dorm_name, email, phone, price, deposit, advance, address, room_capacity, utilities, photo_urls FROM dorms WHERE user_id = $1",
+      "SELECT id, dorm_name, email, phone, price, deposit, advance, address, latitude, longitude, room_capacity, utilities, photo_urls FROM dorms WHERE user_id = $1",
       [userId]
     );
     if (result.rows.length === 0) {
@@ -882,9 +890,10 @@ app.post(
     const body = req.body as {
       dormName?: string; email?: string; phone?: string; price?: string;
       deposit?: string; advance?: string; address?: string; capacity?: string;
+      latitude?: string; longitude?: string;
       utilities?: string[] | string;
     };
-    const { dormName, email, phone, price, deposit, advance, address, capacity, utilities: utilitiesBody } = body;
+    const { dormName, email, phone, price, deposit, advance, address, capacity, latitude, longitude, utilities: utilitiesBody } = body;
     const files = (req as express.Request & { files?: Express.Multer.File[] }).files;
 
     if (!dormName || !email || !phone || !price || !address || capacity == null) {
@@ -913,8 +922,8 @@ app.post(
       }
 
       await pool.query(
-        `INSERT INTO dorms (user_id, dorm_name, email, phone, price, deposit, advance, address, room_capacity, utilities, photo_urls)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        `INSERT INTO dorms (user_id, dorm_name, email, phone, price, deposit, advance, address, latitude, longitude, room_capacity, utilities, photo_urls)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          ON CONFLICT (user_id) DO UPDATE SET
            dorm_name = EXCLUDED.dorm_name,
            email = EXCLUDED.email,
@@ -923,15 +932,17 @@ app.post(
            deposit = EXCLUDED.deposit,
            advance = EXCLUDED.advance,
            address = EXCLUDED.address,
+           latitude = EXCLUDED.latitude,
+           longitude = EXCLUDED.longitude,
            room_capacity = EXCLUDED.room_capacity,
            utilities = EXCLUDED.utilities,
            photo_urls = CASE WHEN EXCLUDED.photo_urls IS NOT NULL AND jsonb_array_length(EXCLUDED.photo_urls) > 0 THEN EXCLUDED.photo_urls ELSE dorms.photo_urls END,
            updated_at = current_timestamp`,
-        [userId, dormName, email, phoneVal, price, deposit || null, advance || null, address, Number(capacity), utilities, JSON.stringify(photoUrlsToSave)]
+        [userId, dormName, email, phoneVal, price, deposit || null, advance || null, address, latitude ? parseFloat(latitude) : null, longitude ? parseFloat(longitude) : null, Number(capacity), utilities, JSON.stringify(photoUrlsToSave)]
       );
 
       const out = await pool.query(
-        "SELECT id, dorm_name, email, phone, price, deposit, advance, address, room_capacity, utilities, photo_urls FROM dorms WHERE user_id = $1",
+        "SELECT id, dorm_name, email, phone, price, deposit, advance, address, latitude, longitude, room_capacity, utilities, photo_urls FROM dorms WHERE user_id = $1",
         [userId]
       );
       res.json({ message: "Dorm saved", dorm: out.rows[0] });
@@ -942,14 +953,24 @@ app.post(
   }
 );
 
+// ─────────────────────────────────────────────
+// GET /dorms/available
+// Returns all dorms with a real-time occupied_count computed from
+// approved + tenant_accepted reservations in the database.
+// ─────────────────────────────────────────────
 app.get("/dorms/available", async (_req, res) => {
   try {
     const result = await pool.query(
-      `SELECT d.id, d.user_id as owner_id, d.dorm_name, d.email, d.phone, d.price, d.deposit, d.advance,
-              d.address, d.room_capacity, d.utilities, d.photo_urls,
-              u.full_name as owner_name
+      `SELECT d.id, d.user_id AS owner_id, d.dorm_name, d.email, d.phone, d.price, d.deposit, d.advance,
+              d.address, d.latitude, d.longitude, d.room_capacity, d.utilities, d.photo_urls,
+              u.full_name AS owner_name,
+              COUNT(r.id) FILTER (
+                WHERE r.status = 'approved' AND r.tenant_action = 'accepted'
+              )::int AS occupied_count
        FROM dorms d
        JOIN users u ON d.user_id = u.id
+       LEFT JOIN reservations r ON r.dorm_owner_id = d.user_id
+       GROUP BY d.id, u.full_name, u.id
        ORDER BY d.created_at DESC`
     );
     res.json(result.rows.map(row => ({
@@ -966,6 +987,7 @@ app.get("/dorms/available", async (_req, res) => {
       utilities: row.utilities,
       photo_urls: row.photo_urls,
       owner_name: row.owner_name,
+      occupied_count: row.occupied_count ?? 0,
     })));
   } catch (err) {
     console.error("Get available dorms error:", err);
@@ -988,6 +1010,10 @@ app.get("/users", async (_req, res) => {
     res.status(500).json({ message: "Database error" });
   }
 });
+
+// ─────────────────────────────────────────────
+// MESSAGES
+// ─────────────────────────────────────────────
 
 app.get("/messages/contacts", async (req, res) => {
   const userId = await getUserIdFromToken(req);
@@ -1148,9 +1174,9 @@ app.get("/messages/conversations", async (req, res) => {
         ),
         combined AS (
           SELECT * FROM owner_side
-          UNION ALL
+          UNION
           SELECT * FROM tenant_side
-          UNION ALL
+          UNION
           SELECT * FROM message_side
         ),
         contacts AS (
@@ -1238,6 +1264,77 @@ app.get("/messages/:contactId/history", async (req, res) => {
     return res.json(result.rows);
   } catch (err) {
     console.error("Get conversation history error:", err);
+    return res.status(500).json({ message: "Database error" });
+  }
+});
+
+// ─────────────────────────────────────────────
+// POST /messages/send
+// Single delivery path for all messages (web + mobile).
+// Saves to DB once, then pushes `new_message` to the RECIPIENT only (rid).
+// The sender NEVER receives a WebSocket echo — they see their own message
+// via optimistic update on the client side.
+// The `send_message` socket handler in websocket.ts has been removed to
+// prevent double-delivery. This is the only place messages are persisted.
+// ─────────────────────────────────────────────
+app.post("/messages/send", requireAuth, async (req, res) => {
+  const senderId = (req as express.Request & { userId: number }).userId;
+  const { recipientId, message } = req.body as { recipientId?: number; message?: string };
+
+  if (!recipientId || !message || String(message).trim().length === 0) {
+    return res.status(400).json({ message: "recipientId and message are required" });
+  }
+
+  const trimmedMessage = String(message).trim();
+  const rid = Number(recipientId);
+
+  if (!rid || rid === senderId) {
+    return res.status(400).json({ message: "Invalid recipientId" });
+  }
+
+  try {
+    // Verify recipient exists
+    const recipientCheck = await pool.query(
+      "SELECT id FROM users WHERE id = $1",
+      [rid]
+    );
+    if (recipientCheck.rows.length === 0) {
+      return res.status(404).json({ message: "Recipient user not found" });
+    }
+
+    const allowed = await canDormOwnerMessageNonTenant(senderId, rid);
+    if (!allowed) {
+      return res.status(403).json({
+        message: "Cannot message this user",
+      });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO messages (sender_id, recipient_id, message, created_at)
+       VALUES ($1, $2, $3, NOW())
+       RETURNING id, sender_id, recipient_id, message, created_at`,
+      [senderId, rid, trimmedMessage]
+    );
+
+    const saved = result.rows[0];
+
+    // FIX: Push `new_message` to the RECIPIENT only (rid).
+    // Do NOT notify senderId — they already see their own message via
+    // optimistic update. Notifying them would create a duplicate incoming message.
+    const io = req.app.get('io');
+    if (io) {
+      notifyUser(io, rid, 'new_message', {
+        id: saved.id,
+        senderId,
+        recipientId: rid,
+        message: trimmedMessage,
+        timestamp: saved.created_at,
+      });
+    }
+
+    return res.status(201).json({ message: "Message sent", data: saved });
+  } catch (err) {
+    console.error("Send message error:", err);
     return res.status(500).json({ message: "Database error" });
   }
 });
@@ -1341,7 +1438,7 @@ app.post("/reservations", async (req, res) => {
         tenantEmail = String(byName.rows[0].email || "").trim().toLowerCase() || null;
       }
     }
-    
+
     console.log("📧 Reservation Creation - tenant_email:", {
       fromRequestSnakeCase: tenant_email || null,
       fromRequestCamelCase: tenantEmailCamelCase || null,
@@ -1747,7 +1844,7 @@ app.patch("/reservations/:id/mark-payment-paid", async (req, res) => {
     const tenantEmailFromOtherReservation = String(current.rows[0].tenant_email_from_other_reservation || "").trim().toLowerCase();
     const tenantEmailFromLookup = String(current.rows[0].tenant_email_from_user || "").trim().toLowerCase();
     const tenantEmail = tenantEmailFromReservation || tenantEmailFromOtherReservation || tenantEmailFromLookup || null;
-    
+
     console.log("📧 Payment Email Debug:", {
       reservationId: rid,
       tenantName: current.rows[0].full_name,
@@ -2065,6 +2162,10 @@ async function ensureSchema(): Promise<void> {
     await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS termination_reason text;");
 
     // ── Columns required by TenantDashboardActivity ───────────────────────
+    await pool.query("ALTER TABLE dorms ADD COLUMN IF NOT EXISTS latitude double precision;");
+    await pool.query("ALTER TABLE dorms ADD COLUMN IF NOT EXISTS longitude double precision;");
+
+    // ── Columns required by TenantDashboardActivity ───────────────────────
     await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS payments_paid integer NOT NULL DEFAULT 0;");
     await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS advance_used boolean NOT NULL DEFAULT false;");
     await pool.query("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS deposit_used boolean NOT NULL DEFAULT false;");
@@ -2115,7 +2216,7 @@ async function startServer() {
   app.set('io', io);
 
   httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running at http://192.168.68.131:${PORT}`);
+    console.log(`🚀 Server running at http://192.168.68.111/:${PORT}`);
     console.log(`🔌 WebSocket server is ready`);
   });
 }

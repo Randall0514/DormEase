@@ -7,8 +7,10 @@ interface WebSocketContextType {
   isConnected: boolean;
   sendMessage: (recipientId: number, message: string) => void;
   onNewMessage: (callback: (data: any) => void) => void;
+  onMessageSent: (callback: (data: any) => void) => void;
   onNotification: (callback: (data: any) => void) => void;
   offNewMessage: (callback: (data: any) => void) => void;
+  offMessageSent: (callback: (data: any) => void) => void;
   offNotification: (callback: (data: any) => void) => void;
 }
 
@@ -25,6 +27,12 @@ export const WebSocketProvider: React.FC<Props> = ({ children }) => {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const socketRef = useRef<Socket | null>(null);
+
+  // Ref-based callback registries — ONE socket listener per event,
+  // callbacks are managed via Sets to prevent duplicate handlers.
+  const newMessageCallbacks = useRef<Set<(data: any) => void>>(new Set());
+  const messageSentCallbacks = useRef<Set<(data: any) => void>>(new Set());
+  const notificationCallbacks = useRef<Set<(data: any) => void>>(new Set());
 
   useEffect(() => {
     const token = localStorage.getItem(AUTH_TOKEN_KEY);
@@ -82,6 +90,24 @@ export const WebSocketProvider: React.FC<Props> = ({ children }) => {
       antdMessage.error('Failed to reconnect. Please refresh the page.');
     });
 
+    // Register exactly ONE listener per event on the socket.
+    // Each listener fans out to all registered callbacks.
+    newSocket.on('new_message', (data: any) => {
+      newMessageCallbacks.current.forEach((cb) => cb(data));
+    });
+
+    newSocket.on('message_sent', (data: any) => {
+      messageSentCallbacks.current.forEach((cb) => cb(data));
+    });
+
+    newSocket.on('notification', (data: any) => {
+      notificationCallbacks.current.forEach((cb) => cb(data));
+    });
+
+    newSocket.on('reservation_updated', (data: any) => {
+      notificationCallbacks.current.forEach((cb) => cb(data));
+    });
+
     setSocket(newSocket);
 
     return () => {
@@ -92,60 +118,51 @@ export const WebSocketProvider: React.FC<Props> = ({ children }) => {
 
   const sendMessage = useCallback(
     (recipientId: number, message: string) => {
-      if (socket && isConnected) {
-        socket.emit('send_message', { recipientId, message });
+      const s = socketRef.current;
+      if (s && s.connected) {
+        s.emit('send_message', { recipientId, message });
       } else {
         antdMessage.error('Not connected to server');
       }
     },
-    [socket, isConnected]
+    []
   );
 
-  const onNewMessage = useCallback(
-    (callback: (data: any) => void) => {
-      if (socket) {
-        socket.on('new_message', callback);
-      }
-    },
-    [socket]
-  );
+  // Subscribe / unsubscribe callbacks via ref Sets.
+  // These are stable references — no dependency on `socket` state.
+  const onNewMessage = useCallback((callback: (data: any) => void) => {
+    newMessageCallbacks.current.add(callback);
+  }, []);
 
-  const onNotification = useCallback(
-    (callback: (data: any) => void) => {
-      if (socket) {
-        socket.on('notification', callback);
-        socket.on('reservation_updated', callback);
-      }
-    },
-    [socket]
-  );
+  const offNewMessage = useCallback((callback: (data: any) => void) => {
+    newMessageCallbacks.current.delete(callback);
+  }, []);
 
-  const offNewMessage = useCallback(
-    (callback: (data: any) => void) => {
-      if (socket) {
-        socket.off('new_message', callback);
-      }
-    },
-    [socket]
-  );
+  const onMessageSent = useCallback((callback: (data: any) => void) => {
+    messageSentCallbacks.current.add(callback);
+  }, []);
 
-  const offNotification = useCallback(
-    (callback: (data: any) => void) => {
-      if (socket) {
-        socket.off('notification', callback);
-        socket.off('reservation_updated', callback);
-      }
-    },
-    [socket]
-  );
+  const offMessageSent = useCallback((callback: (data: any) => void) => {
+    messageSentCallbacks.current.delete(callback);
+  }, []);
+
+  const onNotification = useCallback((callback: (data: any) => void) => {
+    notificationCallbacks.current.add(callback);
+  }, []);
+
+  const offNotification = useCallback((callback: (data: any) => void) => {
+    notificationCallbacks.current.delete(callback);
+  }, []);
 
   const value: WebSocketContextType = {
     socket,
     isConnected,
     sendMessage,
     onNewMessage,
+    onMessageSent,
     onNotification,
     offNewMessage,
+    offMessageSent,
     offNotification,
   };
 

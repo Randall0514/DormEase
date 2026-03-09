@@ -27,6 +27,7 @@ import type { UploadFile } from 'antd';
 import type { MenuProps } from 'antd';
 import { BellOutlined, UserOutlined, InboxOutlined, LeftOutlined, RightOutlined, CheckOutlined, CloseOutlined, MenuOutlined } from '@ant-design/icons';
 import Sidebar, { type SectionKey } from './Sidebar';
+import LocationPickerMap from './components/LocationPickerMap';
 import Profile from './Profile';
 import Settings from './Settings';
 import Messages from './Messages';
@@ -52,6 +53,8 @@ interface DormData {
   phone: string;
   price: string;
   address: string;
+  latitude?: number | null;
+  longitude?: number | null;
   deposit?: string | null;
   advance?: string | null;
   room_capacity: number;
@@ -131,6 +134,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
   const [conversationUnreadCounts, setConversationUnreadCounts] = useState<Record<number, number>>({});
   const [hoveredTenantId, setHoveredTenantId] = useState<number | null>(null);
+  const [userEmail, setUserEmail] = useState<string>('');
   const carouselRef = useRef<any>(null);
   const carouselClickCooldown = useRef(0);
 
@@ -823,26 +827,40 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
     fetchDorm();
     fetchNotifications();
     const interval = setInterval(fetchNotifications, 5000);
+
+    // Fetch logged-in user's email for auto-fill
+    fetch(`${API_BASE}/auth/me`, { headers: getAuthHeaders() })
+      .then((res) => res.ok ? res.json() : Promise.reject(res))
+      .then((data) => {
+        if (data.user?.email) setUserEmail(data.user.email);
+      })
+      .catch(() => {});
+
     return () => clearInterval(interval);
   }, []);
 
   // populate setup form with existing dorm data when available
   useEffect(() => {
-    if (!dorm) return;
-    setupForm.setFieldsValue({
-      dormName: dorm.dorm_name,
-      email: dorm.email,
-      phone: dorm.phone,
-      price: dorm.price,
-      deposit: dorm.deposit || undefined,
-      advance: dorm.advance || undefined,
-      address: dorm.address,
-      capacity: dorm.room_capacity,
-      utilities: dorm.utilities || [],
-    });
+    if (dorm) {
+      setupForm.setFieldsValue({
+        dormName: dorm.dorm_name,
+        email: dorm.email,
+        phone: dorm.phone,
+        price: dorm.price,
+        deposit: dorm.deposit || undefined,
+        advance: dorm.advance || undefined,
+        address: dorm.address,
+        latitude: dorm.latitude || undefined,
+        longitude: dorm.longitude || undefined,
+        capacity: dorm.room_capacity,
+        utilities: dorm.utilities || [],
+      });
+    } else if (userEmail) {
+      setupForm.setFieldsValue({ email: userEmail });
+    }
 
     // populate fileList with existing photos if not already set
-    if (dorm.photo_urls && dorm.photo_urls.length > 0 && fileList.length === 0) {
+    if (dorm?.photo_urls && dorm.photo_urls.length > 0 && fileList.length === 0) {
       const existing = dorm.photo_urls.map((p, i) => ({
         uid: `existing-${i}`,
         name: `photo-${i}`,
@@ -851,7 +869,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
       }));
       setFileList(existing as UploadFile[]);
     }
-  }, [dorm, setupForm]);
+  }, [dorm, userEmail, setupForm]);
 
   useEffect(() => {
     setThumbStart(0);
@@ -875,6 +893,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
       formData.append('deposit', String(values.deposit || ''));
       formData.append('advance', String(values.advance || ''));
       formData.append('address', String(values.address));
+      if (values.latitude) formData.append('latitude', String(values.latitude));
+      if (values.longitude) formData.append('longitude', String(values.longitude));
       formData.append('capacity', String(values.capacity));
       // utilities: array of keys
       formData.append('utilities', JSON.stringify(values.utilities || []));
@@ -923,13 +943,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
             </Form.Item>
             <Form.Item
               name="phone"
-              rules={[{ required: true, message: 'Required' }, { pattern: /^\d{10}$/, message: 'Enter a 10-digit phone number' }]}
+              rules={[{ required: true, message: 'Required' }, { pattern: /^9\d{9}$/, message: 'Must start with 9 and be 10 digits' }]}
             >
-              <Input addonBefore="+63" placeholder="Phone Number" style={{ borderRadius: 8 }} size="large" maxLength={10} inputMode="numeric" />
+              <Input addonBefore="+63" placeholder="9XXXXXXXXX" style={{ borderRadius: 8 }} size="large" maxLength={10} inputMode="numeric" onChange={(e) => { const v = e.target.value.replace(/\D/g, '').replace(/^0+/, ''); if (v !== e.target.value) setupForm.setFieldsValue({ phone: v }); }} />
             </Form.Item>
-            <Form.Item name="address" rules={[{ required: true, message: 'Required' }]}>
-              <Input placeholder="Address" style={{ borderRadius: 8 }} size="large" />
+            <Form.Item name="address" rules={[{ required: true, message: 'Please pick a location on the map' }]}>
+              <Input placeholder="Address (pick on map below)" style={{ borderRadius: 8 }} size="large" readOnly />
             </Form.Item>
+            <Form.Item name="latitude" hidden><Input /></Form.Item>
+            <Form.Item name="longitude" hidden><Input /></Form.Item>
           </Col>
           <Col xs={24} md={12}>
             <Form.Item name="price" rules={[{ required: true, message: 'Required' }]}>
@@ -946,6 +968,20 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
             </Form.Item>
           </Col>
         </Row>
+
+        <div style={{ marginBottom: 16 }}>
+          <Text style={{ fontWeight: 600, marginBottom: 8, display: 'block' }}>Pin Your Dorm Location</Text>
+          <LocationPickerMap
+            value={
+              setupForm.getFieldValue('latitude') && setupForm.getFieldValue('longitude')
+                ? { lat: setupForm.getFieldValue('latitude'), lng: setupForm.getFieldValue('longitude') }
+                : undefined
+            }
+            onChange={({ lat, lng, address }) => {
+              setupForm.setFieldsValue({ address, latitude: lat, longitude: lng });
+            }}
+          />
+        </div>
 
         <Form.Item label="Upload Photos (Minimum of 4)" name="photos">
           <Dragger multiple fileList={fileList} onChange={({ fileList: fl }) => setFileList(fl)} beforeUpload={() => false} style={{ borderRadius: 12, background: '#f5f5f5' }}>
@@ -1569,7 +1605,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
           {renderSection()}
         </Content>
 
-        <Modal title={null} open={setupModalOpen} onCancel={() => setSetupModalOpen(false)} footer={null} width={isMobile ? '95vw' : 640} closable={true} styles={{ body: { padding: 0 } }}>
+        <Modal title={null} open={setupModalOpen} onCancel={() => setSetupModalOpen(false)} footer={null} width={isMobile ? '95vw' : 640} closable={true} styles={{ body: { padding: 0 } }} afterOpenChange={(open) => { if (open) window.dispatchEvent(new Event('resize')); }}>
           {setupModalContent}
         </Modal>
       </Layout>
