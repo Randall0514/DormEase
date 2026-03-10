@@ -1762,6 +1762,8 @@ app.patch("/reservations/:id/mark-payment-paid", async (req, res) => {
          r.phone,
          r.dorm_name,
          r.price_per_month,
+         r.advance,
+         r.deposit,
          r.move_in_date,
          r.tenant_email,
          r.receipt_history,
@@ -1830,12 +1832,19 @@ app.patch("/reservations/:id/mark-payment-paid", async (req, res) => {
         ? new Date(moveInDate.getFullYear(), moveInDate.getMonth() + parsedPaymentNumber, moveInDate.getDate())
         : null;
 
+    const amountPaid =
+      paymentSourceValue === 'advance'
+        ? Number(current.rows[0].advance || 0)
+        : paymentSourceValue === 'deposit'
+          ? Number(current.rows[0].deposit || 0)
+          : Number(current.rows[0].price_per_month || 0);
+
     const receiptRecord: PaymentReceiptRecord = {
       paymentNumber: parsedPaymentNumber,
       paymentSource: paymentSourceValue,
       tenantName: String(current.rows[0].full_name || "Tenant"),
       dormitory: String(current.rows[0].dorm_name || "Dormitory"),
-      amountPaid: Number(current.rows[0].price_per_month || 0),
+      amountPaid,
       paymentDate: paymentDate.toISOString(),
       nextPaymentDueDate: nextPaymentDueDate ? nextPaymentDueDate.toISOString() : null,
     };
@@ -2102,13 +2111,26 @@ app.get("/payment-history/stats", async (req, res) => {
       `SELECT 
         COUNT(*) as total_payments,
         SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END) as total_paid,
-        SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END) as total_pending,
-        SUM(CASE WHEN status = 'overdue' THEN amount ELSE 0 END) as total_overdue,
         AVG(amount) as avg_payment
       FROM payment_history
       WHERE owner_id = $1 OR tenant_id = $1`,
       [userId]
     );
+
+    // Calculate pending from active reservations (unpaid months × price_per_month)
+    const pendingResult = await pool.query(
+      `SELECT COALESCE(SUM((duration_months - payments_paid) * price_per_month), 0) as total_pending
+       FROM reservations
+       WHERE dorm_owner_id = $1
+         AND status IN ('approved', 'pending')
+         AND payments_paid < duration_months`,
+      [userId]
+    );
+
+    const stats = {
+      ...statsResult.rows[0],
+      total_pending: pendingResult.rows[0].total_pending,
+    };
 
     const monthlyResult = await pool.query(
       `SELECT 
@@ -2124,7 +2146,7 @@ app.get("/payment-history/stats", async (req, res) => {
     );
 
     return res.json({
-      stats: statsResult.rows[0],
+      stats,
       monthly: monthlyResult.rows,
     });
   } catch (err) {
@@ -2216,7 +2238,7 @@ async function startServer() {
   app.set('io', io);
 
   httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running at http://192.168.68.111/:${PORT}`);
+    console.log(`🚀 Server running at http://192.168.68.101/:${PORT}`);
     console.log(`🔌 WebSocket server is ready`);
   });
 }

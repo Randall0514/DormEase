@@ -290,6 +290,7 @@ const Notifications: React.FC<Props> = ({ onNavigate }) => {
       const res = await fetch(`${API_BASE}/reservations/${id}/archive`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({}),
       });
       if (!res.ok) throw new Error('Failed to archive');
       setReservations(prev => prev.map(r => r.id === id ? { ...r, status: 'archived' } : r));

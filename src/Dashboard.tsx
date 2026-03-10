@@ -135,6 +135,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
   const [conversationUnreadCounts, setConversationUnreadCounts] = useState<Record<number, number>>({});
   const [hoveredTenantId, setHoveredTenantId] = useState<number | null>(null);
   const [userEmail, setUserEmail] = useState<string>('');
+  const [userName, setUserName] = useState<string>('');
   const carouselRef = useRef<any>(null);
   const carouselClickCooldown = useRef(0);
 
@@ -556,7 +557,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
-            tenant_id: tenant.id,
             reservation_id: tenant.id,
             tenant_name: tenant.full_name,
             dorm_name: tenant.dorm_name || dorm?.dorm_name || 'Unknown Dorm',
@@ -833,6 +833,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
       .then((res) => res.ok ? res.json() : Promise.reject(res))
       .then((data) => {
         if (data.user?.email) setUserEmail(data.user.email);
+        if (data.user?.fullName) setUserName(data.user.fullName);
       })
       .catch(() => {});
 
@@ -1596,7 +1597,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout, account, onSetupComplet
                 ] 
               }}
             >
-              <Avatar icon={<UserOutlined />} style={{ cursor: 'pointer' }} />
+              <Avatar style={{ cursor: 'pointer', backgroundColor: '#7c3aed', fontWeight: 700 }}>
+                {userName ? userName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : <UserOutlined />}
+              </Avatar>
             </Dropdown>
           </div>
         </Header>

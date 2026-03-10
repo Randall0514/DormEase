@@ -36,6 +36,7 @@ import {
 
 const { Title, Text } = Typography;
 const { useBreakpoint } = Grid;
+const API_BASE = 'http://localhost:3000';
 
 const Profile: React.FC = () => {
   const screens = useBreakpoint();
@@ -76,7 +77,7 @@ const Profile: React.FC = () => {
       return;
     }
 
-    fetch('http://localhost:3000/auth/me', {
+    fetch(`${API_BASE}/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => r.ok ? r.json() : Promise.reject(r))
@@ -115,7 +116,7 @@ const Profile: React.FC = () => {
   const handleLogout = async () => {
     const token = localStorage.getItem('dormease_token');
     try {
-      await fetch('http://localhost:3000/auth/logout', {
+      await fetch(`${API_BASE}/auth/logout`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -133,10 +134,10 @@ const Profile: React.FC = () => {
       setPaymentLoading(true);
       console.log('Fetching payment history...');
       const [paymentsRes, statsRes] = await Promise.all([
-        fetch('http://localhost:3000/payment-history?limit=100', {
+        fetch(`${API_BASE}/payment-history?limit=100`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
-        fetch('http://localhost:3000/payment-history/stats', {
+        fetch(`${API_BASE}/payment-history/stats`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
       ]);
@@ -172,7 +173,7 @@ const Profile: React.FC = () => {
     try {
       setSendingOtp(true);
       const token = localStorage.getItem('dormease_token');
-      const response = await fetch('http://localhost:3000/auth/request-change-otp', {
+      const response = await fetch(`${API_BASE}/auth/request-change-otp`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -199,7 +200,7 @@ const Profile: React.FC = () => {
     try {
       setVerifyingOtp(true);
       const token = localStorage.getItem('dormease_token');
-      const response = await fetch('http://localhost:3000/auth/verify-change-otp', {
+      const response = await fetch(`${API_BASE}/auth/verify-change-otp`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -360,7 +361,7 @@ const Profile: React.FC = () => {
                 >
                   <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', fontWeight: 600 }}>Total Paid</Text>
                   <div style={{ fontSize: 28, fontWeight: 700, color: '#22c55e', marginTop: 8 }}>
-                    ₱{Math.round((Number(paymentStats?.stats?.total_paid) || 0) / 1000)}k
+                    ₱{Number(paymentStats?.stats?.total_paid || 0).toLocaleString()}
                   </div>
                 </Card>
               </Col>
@@ -469,14 +470,14 @@ const Profile: React.FC = () => {
                                 if (!currentPassword || !newPassword) return message.error('Please fill fields');
                                 if (newPassword !== confirm) return message.error('Passwords do not match');
                                 try {
-                                  const loginRes = await fetch('http://localhost:3000/auth/login', {
+                                  const loginRes = await fetch(`${API_BASE}/auth/login`, {
                                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({ identifier: user.email || user.username, password: currentPassword, platform: user.platform || 'web' })
                                   });
                                   if (!loginRes.ok) return message.error('Current password incorrect');
 
                                   const token = localStorage.getItem('dormease_token');
-                                  const patch = await fetch('http://localhost:3000/auth/me', {
+                                  const patch = await fetch(`${API_BASE}/auth/me`, {
                                     method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                                     body: JSON.stringify({ password: newPassword })
                                   });
@@ -554,14 +555,14 @@ const Profile: React.FC = () => {
                                 if (!user) return message.error('No user');
                                 if (!email || !password) return message.error('Please fill fields');
                                 try {
-                                  const loginRes = await fetch('http://localhost:3000/auth/login', {
+                                  const loginRes = await fetch(`${API_BASE}/auth/login`, {
                                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({ identifier: user.email || user.username, password, platform: user.platform || 'web' })
                                   });
                                   if (!loginRes.ok) return message.error('Password incorrect');
 
                                   const token = localStorage.getItem('dormease_token');
-                                  const patch = await fetch('http://localhost:3000/auth/me', {
+                                  const patch = await fetch(`${API_BASE}/auth/me`, {
                                     method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                                     body: JSON.stringify({ email })
                                   });
@@ -668,7 +669,7 @@ const Profile: React.FC = () => {
                               >
                                 <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', fontWeight: 600 }}>Total Paid</Text>
                                 <div style={{ fontSize: 24, fontWeight: 700, color: '#22c55e', marginTop: 8 }}>
-                                  ₱{Math.round((Number(paymentStats.stats?.total_paid) || 0) / 1000)}k
+                                  ₱{Number(paymentStats.stats?.total_paid || 0).toLocaleString()}
                                 </div>
                               </Card>
                             </Col>
@@ -684,7 +685,7 @@ const Profile: React.FC = () => {
                               >
                                 <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', fontWeight: 600 }}>Pending</Text>
                                 <div style={{ fontSize: 24, fontWeight: 700, color: '#ef4444', marginTop: 8 }}>
-                                  ₱{((Number(paymentStats.stats?.total_pending) || 0) / 1000).toFixed(1)}k
+                                  ₱{Number(paymentStats.stats?.total_pending || 0).toLocaleString()}
                                 </div>
                               </Card>
                             </Col>
@@ -700,7 +701,7 @@ const Profile: React.FC = () => {
                               >
                                 <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', fontWeight: 600 }}>Average</Text>
                                 <div style={{ fontSize: 24, fontWeight: 700, color: '#fb923c', marginTop: 8 }}>
-                                  ₱{Math.round((Number(paymentStats.stats?.avg_payment) || 0) / 1000)}k
+                                  ₱{Number(paymentStats.stats?.avg_payment || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
                                 </div>
                               </Card>
                             </Col>
@@ -927,7 +928,7 @@ const Profile: React.FC = () => {
             <Form form={form} layout="vertical" onFinish={async (vals) => {
               try {
                 const token = localStorage.getItem('dormease_token');
-                const res = await fetch('http://localhost:3000/auth/me', {
+                const res = await fetch(`${API_BASE}/auth/me`, {
                   method: 'PATCH',
                   headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                   body: JSON.stringify(vals),
