@@ -42,7 +42,7 @@ const Profile: React.FC = () => {
   const screens = useBreakpoint();
   const isMobile = !screens.md;
   const isDarkMode = document.body.classList.contains('dark-mode');
-  const [user, setUser] = useState<{ id?: number; username?: string; email?: string; fullName?: string; platform?: string } | null>(null);
+  const [user, setUser] = useState<{ id?: number; username?: string; email?: string; phoneNumber?: string; fullName?: string; platform?: string } | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [activeTab, setActiveTab] = useState<string>('personal');
@@ -313,7 +313,7 @@ const Profile: React.FC = () => {
                 size="large"
                 style={{ marginBottom: 12 }}
                 onClick={() => {
-                  form.setFieldsValue({ fullName: user?.fullName, username: user?.username, email: user?.email, password: '' });
+                  form.setFieldsValue({ fullName: user?.fullName, username: user?.username, email: user?.email, phoneNumber: user?.phoneNumber || '', password: '' });
                   setEditing(true);
                 }}
               >
@@ -417,6 +417,9 @@ const Profile: React.FC = () => {
                               <MailOutlined style={{ color: '#4f73ff' }} />
                               <Text>{user?.email || '-'}</Text>
                             </Space>
+                          </Descriptions.Item>
+                          <Descriptions.Item label="Phone Number">
+                            <Text>{user?.phoneNumber ? `+63${user.phoneNumber}` : '-'}</Text>
                           </Descriptions.Item>
                           <Descriptions.Item label="Platform">
                             <Tag color="blue">{user?.platform || 'web'}</Tag>
@@ -751,7 +754,8 @@ const Profile: React.FC = () => {
                                   payment.amount?.toString().includes(query) ||
                                   payment.payment_source?.toLowerCase().includes(query) ||
                                   payment.status?.toLowerCase().includes(query) ||
-                                  payment.payment_number?.toString().includes(query)
+                                  payment.payment_number?.toString().includes(query) ||
+                                  payment.tenant_type?.toLowerCase().includes(query)
                                 );
                               })}
                               pagination={{ pageSize: 10, showSizeChanger: false }}
@@ -763,6 +767,16 @@ const Profile: React.FC = () => {
                                   key: 'tenant_name',
                                   render: (text) => <Text strong>{text}</Text>,
                                   sorter: (a, b) => a.tenant_name.localeCompare(b.tenant_name),
+                                },
+                                {
+                                  title: 'Tenant Type',
+                                  dataIndex: 'tenant_type',
+                                  key: 'tenant_type',
+                                  render: (type) => (
+                                    <Tag color={type === 'current' ? 'green' : 'default'}>
+                                      {type === 'current' ? 'Current Tenant' : 'Old Tenant'}
+                                    </Tag>
+                                  ),
                                 },
                                 {
                                   title: 'Dorm',
@@ -953,6 +967,9 @@ const Profile: React.FC = () => {
               </Form.Item>
               <Form.Item name="email" label="Email" rules={[{ required: true, type: 'email', message: 'Please enter a valid email' }]}>
                 <Input />
+              </Form.Item>
+              <Form.Item name="phoneNumber" label="Phone Number">
+                <Input addonBefore="+63" placeholder="9XXXXXXXXX" maxLength={10} inputMode="numeric" />
               </Form.Item>
               <Form.Item name="password" label="New password" extra="Leave blank to keep current password">
                 <Input.Password />

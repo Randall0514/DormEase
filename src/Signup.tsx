@@ -9,7 +9,7 @@ const { useBreakpoint } = Grid;
 
 interface SignupProps {
   onNavigateToLogin?: () => void;
-  onContinueToVerify?: (data: { fullName: string; username: string; email: string; password: string }) => void;
+  onContinueToVerify?: (data: { fullName: string; username: string; email: string; phoneNumber: string; password: string }) => void;
 }
 
 const Signup: React.FC<SignupProps> = ({ onNavigateToLogin, onContinueToVerify }) => {
@@ -34,6 +34,7 @@ const Signup: React.FC<SignupProps> = ({ onNavigateToLogin, onContinueToVerify }
     fullName: string;
     username: string;
     email: string;
+    phoneNumber: string;
     password: string;
     confirmPassword: string;
     agree: boolean;
@@ -43,6 +44,7 @@ const Signup: React.FC<SignupProps> = ({ onNavigateToLogin, onContinueToVerify }
         fullName: values.fullName,
         username: values.username,
         email: values.email,
+        phoneNumber: values.phoneNumber,
         password: values.password,
       });
     }
@@ -152,6 +154,20 @@ const Signup: React.FC<SignupProps> = ({ onNavigateToLogin, onContinueToVerify }
               style={{ marginBottom: 12 }}
             >
               <Input placeholder="Enter your email" />
+            </Form.Item>
+
+            <Form.Item
+              label="Phone Number"
+              name="phoneNumber"
+              rules={[
+                {
+                  pattern: /^[0-9]{10,11}$/,
+                  message: 'Please enter a valid phone number (10-11 digits)',
+                },
+              ]}
+              style={{ marginBottom: 12 }}
+            >
+              <Input addonBefore="+63" placeholder="9XXXXXXXXX" maxLength={10} inputMode="numeric" onChange={(e) => { const v = e.target.value.replace(/\D/g, '').replace(/^0+/, ''); if (v !== e.target.value) form.setFieldsValue({ phoneNumber: v }); }} />
             </Form.Item>
 
             <Form.Item

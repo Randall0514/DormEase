@@ -649,16 +649,17 @@ app.post("/auth/signup", async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
+    const phoneNumber = req.body.phoneNumber || null;
     const result = await pool.query(
-      `INSERT INTO users (full_name, username, email, password, platform)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id, username, email, platform, full_name`,
-      [fullName, username, normalizedEmail, hashedPassword, platform]
+      `INSERT INTO users (full_name, username, email, phone_number, password, platform)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, username, email, phone_number, platform, full_name`,
+      [fullName, username, normalizedEmail, phoneNumber, hashedPassword, platform]
     );
     const user = result.rows[0];
     const token = await createSession(user.id);
     res.status(201).json({
       message: "User created successfully",
-      user: { id: user.id, username: user.username, email: user.email, platform: user.platform, fullName: user.full_name },
+      user: { id: user.id, username: user.username, email: user.email, phoneNumber: user.phone_number, platform: user.platform, fullName: user.full_name },
       token,
     });
   } catch (err) {
@@ -694,7 +695,7 @@ app.post("/auth/login", async (req, res) => {
     const token = await createSession(user.id);
     res.json({
       message: "Login successful",
-      user: { id: user.id, username: user.username, email: user.email, platform: user.platform, fullName: user.full_name },
+      user: { id: user.id, username: user.username, email: user.email, phoneNumber: user.phone_number, platform: user.platform, fullName: user.full_name },
       token,
     });
   } catch (err) {
@@ -711,7 +712,7 @@ app.get("/auth/me", async (req, res) => {
   }
   try {
     const result = await pool.query(
-      `SELECT u.id, u.full_name, u.username, u.email, u.platform
+      `SELECT u.id, u.full_name, u.username, u.email, u.phone_number, u.platform
        FROM users u
        JOIN sessions s ON s.user_id = u.id
        WHERE s.token = $1 AND s.expires_at > current_timestamp`,
@@ -722,7 +723,7 @@ app.get("/auth/me", async (req, res) => {
     }
     const user = result.rows[0];
     res.json({
-      user: { id: user.id, username: user.username, email: user.email, platform: user.platform, fullName: user.full_name },
+      user: { id: user.id, username: user.username, email: user.email, phoneNumber: user.phone_number, platform: user.platform, fullName: user.full_name },
     });
   } catch (err) {
     console.error("Auth me error:", err);
@@ -732,10 +733,10 @@ app.get("/auth/me", async (req, res) => {
 
 app.patch("/auth/me", requireAuth, async (req, res) => {
   const userId = (req as express.Request & { userId: number }).userId;
-  const { fullName, username, email, password } = req.body as {
-    fullName?: string; username?: string; email?: string; password?: string;
+  const { fullName, username, email, password, phoneNumber } = req.body as {
+    fullName?: string; username?: string; email?: string; password?: string; phoneNumber?: string;
   };
-  if (!fullName && !username && !email && !password) {
+  if (!fullName && !username && !email && !password && phoneNumber === undefined) {
     return res.status(400).json({ message: "No fields to update" });
   }
   try {
@@ -753,17 +754,18 @@ app.patch("/auth/me", requireAuth, async (req, res) => {
     if (fullName) { fields.push(`full_name = $${idx++}`); vals.push(fullName); }
     if (username) { fields.push(`username = $${idx++}`); vals.push(username); }
     if (email)    { fields.push(`email = $${idx++}`);    vals.push(email); }
+    if (phoneNumber !== undefined) { fields.push(`phone_number = $${idx++}`); vals.push(phoneNumber || null); }
     if (password) {
       const hashed = await bcrypt.hash(password, 10);
       fields.push(`password = $${idx++}`);
       vals.push(hashed);
     }
     if (fields.length === 0) return res.status(400).json({ message: "Nothing to update" });
-    const sql = `UPDATE users SET ${fields.join(", ")} WHERE id = $${idx} RETURNING id, full_name, username, email, platform`;
+    const sql = `UPDATE users SET ${fields.join(", ")} WHERE id = $${idx} RETURNING id, full_name, username, email, phone_number, platform`;
     vals.push(userId);
     const result = await pool.query(sql, vals);
     const updated = result.rows[0];
-    res.json({ user: { id: updated.id, fullName: updated.full_name, username: updated.username, email: updated.email, platform: updated.platform } });
+    res.json({ user: { id: updated.id, fullName: updated.full_name, username: updated.username, email: updated.email, phoneNumber: updated.phone_number, platform: updated.platform } });
   } catch (err) {
     console.error("Update user error:", err);
     res.status(500).json({ message: "Database error" });
@@ -1942,7 +1944,136 @@ app.patch("/reservations/:id/archive", async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ message: "Reservation not found or not authorized" });
     }
-    return res.json({ message: "Archived", reservation: result.rows[0] });
+
+    const reservation = result.rows[0];
+
+    // ── Send termination email to tenant ──
+    let emailSent = false;
+    let emailMessage = "Tenant email is not available";
+
+    // Resolve tenant email: reservation.tenant_email → lookup by name → lookup by phone
+    let tenantEmail = String(reservation.tenant_email || "").trim().toLowerCase() || null;
+    if (!tenantEmail) {
+      const emailLookup = await pool.query(
+        `SELECT email FROM users WHERE lower(trim(full_name)) = lower(trim($1)) ORDER BY id DESC LIMIT 1`,
+        [reservation.full_name]
+      );
+      if (emailLookup.rows.length > 0) {
+        tenantEmail = emailLookup.rows[0].email;
+      }
+    }
+
+    if (tenantEmail) {
+      const transporter = getSmtpTransporter();
+      const fromAddress = process.env.SMTP_FROM || process.env.SMTP_USER;
+
+      if (transporter && fromAddress) {
+        const ownerResult = await pool.query("SELECT full_name FROM users WHERE id = $1", [userId]);
+        const ownerName = ownerResult.rows[0]?.full_name || "Dorm Owner";
+        const reasonText = termination_reason ? termination_reason : "No reason provided";
+
+        const escapeHtml = (v: string) => String(v || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+        try {
+          await transporter.sendMail({
+            from: fromAddress,
+            to: tenantEmail,
+            subject: `DormEase – Your tenancy at ${reservation.dorm_name} has been terminated`,
+            text: [
+              `Hello ${reservation.full_name},`,
+              "",
+              `We regret to inform you that your tenancy at ${reservation.dorm_name} has been terminated by the dorm owner (${ownerName}).`,
+              "",
+              `Reason: ${reasonText}`,
+              "",
+              `Termination Date: ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}`,
+              "",
+              "If you have any concerns, please contact the dorm owner directly.",
+              "",
+              "Best regards,",
+              "DormEase",
+            ].join("\n"),
+            html: `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <div style="background: #ff4d4f; color: white; padding: 20px; border-radius: 8px 8px 0 0; text-align: center;">
+                  <h2 style="margin: 0;">Tenancy Terminated</h2>
+                </div>
+                <div style="padding: 24px; background: #f9f9f9; border: 1px solid #e8e8e8; border-radius: 0 0 8px 8px;">
+                  <p>Hello <strong>${escapeHtml(reservation.full_name)}</strong>,</p>
+                  <p>We regret to inform you that your tenancy at <strong>${escapeHtml(reservation.dorm_name)}</strong> has been terminated by the dorm owner (<strong>${escapeHtml(ownerName)}</strong>).</p>
+                  <div style="background: #fff2f0; border: 1px solid #ffccc7; border-radius: 6px; padding: 16px; margin: 16px 0;">
+                    <strong>Reason:</strong><br/>
+                    <p style="margin: 8px 0 0 0;">${escapeHtml(reasonText)}</p>
+                  </div>
+                  <p><strong>Termination Date:</strong> ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}</p>
+                  <p style="margin-top: 16px;">If you have any concerns, please contact the dorm owner directly.</p>
+                  <hr style="border: none; border-top: 1px solid #e8e8e8; margin: 20px 0;"/>
+                  <p style="color: #999; font-size: 12px; text-align: center;">This is an automated message from DormEase.</p>
+                </div>
+              </div>`,
+          });
+          emailSent = true;
+          emailMessage = "Termination email sent to tenant";
+          console.log(`📧 Termination email sent to ${tenantEmail} for reservation #${rid}`);
+        } catch (emailErr: any) {
+          emailMessage = `Failed to send email: ${emailErr.message || "Unknown error"}`;
+          console.error("📧 Termination email error:", emailErr.message);
+        }
+      } else {
+        emailMessage = "SMTP not configured";
+      }
+    }
+
+    // ── Record final payment summary in payment_history ──
+    const paymentsPaid = reservation.payments_paid || 0;
+    const totalPayments = reservation.duration_months || 0;
+    const unpaidCount = totalPayments - paymentsPaid;
+
+    if (unpaidCount > 0) {
+      try {
+        // Find tenant user id for payment_history
+        let tenantUserId: number | null = null;
+        const tenantLookup = await pool.query(
+          "SELECT id FROM users WHERE lower(trim(full_name)) = lower(trim($1)) ORDER BY id DESC LIMIT 1",
+          [reservation.full_name]
+        );
+        if (tenantLookup.rows.length > 0) {
+          tenantUserId = tenantLookup.rows[0].id;
+        }
+
+        await pool.query(
+          `INSERT INTO payment_history
+            (owner_id, tenant_id, reservation_id, tenant_name, dorm_name, amount, payment_source, payment_number, status)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [
+            userId,
+            tenantUserId,
+            rid,
+            reservation.full_name,
+            reservation.dorm_name,
+            0,
+            "termination",
+            paymentsPaid,
+            "terminated",
+          ]
+        );
+        console.log(`📋 Payment history termination record created for reservation #${rid} (${paymentsPaid}/${totalPayments} paid, ${unpaidCount} unpaid)`);
+      } catch (phErr: any) {
+        console.error("Payment history termination record error:", phErr.message);
+      }
+    }
+
+    return res.json({
+      message: "Archived",
+      reservation,
+      emailSent,
+      emailMessage,
+      paymentSummary: {
+        paid: paymentsPaid,
+        total: totalPayments,
+        unpaid: unpaidCount,
+      },
+    });
   } catch (err) {
     console.error("Archive reservation error:", err);
     const msg = process.env.NODE_ENV === 'production' ? 'Database error' : (err && (err as any).message) || 'Database error';
@@ -2043,12 +2174,20 @@ app.get("/payment-history", async (req, res) => {
     const pageOffset = Math.max(Number(offset) || 0, 0);
 
     const result = await pool.query(
-      `SELECT 
-        id, owner_id, tenant_id, reservation_id, tenant_name, dorm_name, 
-        amount, payment_source, payment_number, payment_date, status, created_at
-      FROM payment_history
-      WHERE owner_id = $1 OR tenant_id = $1
-      ORDER BY ${sortColumn} ${sortOrder}
+      `SELECT
+        ph.id, ph.owner_id, ph.tenant_id, ph.reservation_id, ph.tenant_name, ph.dorm_name,
+        ph.amount, ph.payment_source, ph.payment_number, ph.payment_date, ph.status, ph.created_at,
+        CASE
+          WHEN r.id IS NOT NULL
+           AND r.status = 'approved'
+           AND r.tenant_action = 'accepted'
+          THEN 'current'
+          ELSE 'old'
+        END AS tenant_type
+      FROM payment_history ph
+      LEFT JOIN reservations r ON r.id = ph.reservation_id
+      WHERE ph.owner_id = $1 OR ph.tenant_id = $1
+      ORDER BY ph.${sortColumn} ${sortOrder}
       LIMIT $2 OFFSET $3`,
       [userId, pageLimit, pageOffset]
     );
@@ -2238,7 +2377,7 @@ async function startServer() {
   app.set('io', io);
 
   httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running at http://192.168.68.101/:${PORT}`);
+    console.log(`🚀 Server running at http://192.168.68.106/:${PORT}`);
     console.log(`🔌 WebSocket server is ready`);
   });
 }

@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS users (
   full_name         VARCHAR(100) NOT NULL,
   username          VARCHAR(50)  NOT NULL UNIQUE,
   email             VARCHAR(100) NOT NULL UNIQUE,
+  phone_number      VARCHAR(20),
   password          VARCHAR(255) NOT NULL,
   platform          VARCHAR(10)  NOT NULL DEFAULT 'web',
   created_at        TIMESTAMP    NOT NULL DEFAULT current_timestamp

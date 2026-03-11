@@ -11,6 +11,7 @@ interface VerifyOTPProps {
     fullName: string;
     username: string;
     email: string;
+    phoneNumber: string;
     password: string;
   };
   onBack: () => void;
@@ -74,6 +75,7 @@ const VerifyOTP: React.FC<VerifyOTPProps> = ({ signupData, onBack, onVerifySucce
           fullName: signupData.fullName,
           username: signupData.username,
           email: signupData.email,
+          phoneNumber: signupData.phoneNumber,
           password: signupData.password,
           otp: values.otp,
           platform: 'web',
